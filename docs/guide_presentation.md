@@ -438,3 +438,45 @@ un historique de skew que personne ne donne gratuitement."
 
 Annoncer ces limites soi-même, c'est la différence entre quelqu'un qui a compris et quelqu'un
 qui a assemblé.
+
+---
+
+## 6. L'onglet Harvesting vol (ajouté ensuite)
+
+### Le straddle delta-hedgé
+
+- On vend un straddle ATM à un mois au niveau du VIX, on couvre le delta chaque soir avec
+  Black-Scholes à cette même vol, on tient jusqu'à l'échéance. P&L = prime − payoff + P&L de
+  couverture − coûts.
+- **L'identité gamma-theta** : le P&L d'une option couverte vaut ½ Σ Γ S² (σ²impl dt − r²). Le
+  vendeur encaisse l'écart entre variance implicite et variance réalisée, pondéré par le gamma.
+  Le code le vérifie : 98 % de corrélation entre le P&L simulé et la formule.
+- **Path dependence** : à écart implicite-réalisée égal, le P&L varie selon l'endroit où le spot
+  se trouvait quand le gamma était grand. Un variance swap n'a pas ce problème, d'où le nuage
+  comparatif.
+- Chiffres S&P depuis 2005 : 261 trades, 79 % gagnants, 0,6 % du spot par mois après coûts,
+  pire mois septembre 2008. On couvre à la vol implicite parce que c'est la seule
+  implémentable : on ne connaît pas la réalisée à l'avance.
+
+### Forward vol et FOMC
+
+- Forward variance entre deux tenors : σ²f = (T2 σ2² − T1 σ1²)/(T2 − T1). Avec VIX9D et VIX
+  on obtient la vol attendue entre le jour 9 et le jour 30.
+- Si un FOMC tombe dans les 9 premiers jours, le VIX9D porte sa variance en plus de la
+  forward. L'excès donne le mouvement implicite : √(9/365 × (σ9D² − σf²)).
+- Résultat : sur 94 réunions, 0,69 % pricé contre 0,80 % réalisé. **La vol d'événement n'est
+  pas surpayée, la vol générique l'est.** Le carry est dans les jours sans nouvelle.
+- Live : avec les deux expiries SPY autour de l'événement, V1 = (n1 − 1) b + (b + e) et
+  V2 = (n2 − 1) b + (b + e), donc b = (V2 − V1)/(n2 − n1) et e = V1 − n1 b. La base b peut
+  aussi venir de l'ATM 30 jours, plus propre quand d'autres événements polluent la deuxième
+  expiry.
+
+### Le signal
+
+- Écart = implicite − prévision HAR+IV. Plus l'écart est grand, plus le premium futur est
+  grand (3 à 6 points), mais ne vendre que sur grand écart perd plus de carry qu'il n'évite de
+  pertes. **Résultat négatif assumé** : l'écart dit combien on est payé, pas quand ça craque.
+
+**Question jury** : "Pourquoi ne pas couvrir à la vol réalisée ?" Parce qu'elle n'est connue
+qu'après. Couvrir à l'implicite donne un P&L path-dependent mais implémentable ; couvrir à la
+réalisée donnerait un P&L lisse mais fictif.
