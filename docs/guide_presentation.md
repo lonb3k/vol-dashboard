@@ -4,6 +4,13 @@ Ce document est pour toi, pas pour le jury. Il couvre trois choses : les concept
 derrière chaque onglet, ce que le code fait concrètement, et les questions qu'on va te poser.
 Objectif : que chaque chiffre affiché soit un chiffre que tu peux expliquer en deux phrases.
 
+
+> **Démo en ligne (phase 2).** La « morning sheet » lit le dashboard à ta place et se régénère chaque
+> jour ouvré après la clôture US : [https://morning-sheet-nine.vercel.app/vol](https://morning-sheet-nine.vercel.app/vol). Les deux projets frères sont sur le même site
+> ([https://morning-sheet-nine.vercel.app/dispersion](https://morning-sheet-nine.vercel.app/dispersion), [https://morning-sheet-nine.vercel.app/basket](https://morning-sheet-nine.vercel.app/basket)). Le code est dans
+> `src/vol_dashboard/sheet.py` ; chaque chiffre vient d'une fonction existante de `src/`. En entretien,
+> ouvre la sheet d'abord, l'app Streamlit ensuite pour les détails.
+
 ---
 
 ## 1. Les concepts, onglet par onglet

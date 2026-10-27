@@ -1,5 +1,9 @@
 # Volatility Dashboard: equity indices and commodities
 
+**Live morning sheet: [https://morning-sheet-nine.vercel.app/vol](https://morning-sheet-nine.vercel.app/vol)**, regenerated every weekday after the US close.
+
+![morning sheet](docs/morning_sheet.gif)
+
 Interactive Streamlit dashboard that compares **realized and implied volatility** across
 equity indices (S&P 500, Nasdaq 100, Russell 2000, Euro Stoxx 50) and commodities
 (WTI crude, gold, silver, natural gas), built on free data so anyone can rerun it, with
@@ -135,6 +139,22 @@ contracts (`CLZ26.NYM`) are cached in `data/contracts/`.
 Known limits of free data: no RVX or VSTOXX history on Yahoo, VIX1Y and VXSLV only have a
 latest print, option quotes are delayed, expired futures contracts disappear, and long-dated
 contracts trade thinly, which understates their vol.
+
+
+## Morning sheet
+
+`src/vol_dashboard/sheet.py` reads the dashboard for you: it runs the functions above on the
+latest close and returns a desk note as a plain dict (tiles with sparklines, sentences with the
+numbers filled in, trade ideas ranked by historical conditional expectation divided by the
+historical worst case in the same regime, and the Plotly figures as JSON). It covers the VIX against realized and the HAR+IV model, the term structure, the crude curve regime, the FOMC calendar, and a ranked short-straddle / variance / crude-vol call with conditional expectation and worst case.
+
+- `python scripts/build_sheet.py [--offline]` writes `sheet/latest.json`.
+- The daily GitHub Actions workflow rebuilds it after the close and commits it.
+- The front end ([lonb3k/morning-sheet](https://github.com/lonb3k/morning-sheet), Next.js on Vercel)
+  reads that JSON and renders it at [https://morning-sheet-nine.vercel.app/vol](https://morning-sheet-nine.vercel.app/vol), next to the sheets of the
+  two sister projects. The Streamlit app stays the full interactive version.
+
+No financial logic lives in `sheet.py`: every number comes from a function that already exists in `src/`.
 
 ## Run it
 
