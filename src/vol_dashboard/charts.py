@@ -264,3 +264,68 @@ def skew_history(hist: pd.DataFrame, metric: str = "rr25") -> go.Figure:
                                  line=dict(width=1.5, color=SERIES[i]), marker=dict(size=6),
                                  hovertemplate="%{y:+.2f}"))
     return fig
+
+
+# ---------- harvesting vol ----------
+
+def straddle_cum(trades: pd.DataFrame) -> go.Figure:
+    fig = _base("Short 1m ATM straddle, delta-hedged daily: cumulative P&L in % of spot (after costs)", height=360,
+                yaxis=dict(gridcolor=GRID, zeroline=True, zerolinecolor=MUTED, ticksuffix="%"))
+    fig.add_trace(go.Scatter(x=trades.index, y=trades["cum_pnl_pct"], name="Cumulative P&L", mode="lines",
+                             line=dict(width=2, color=C["blue"]), hovertemplate="%{y:.1f}%"))
+    fig.add_trace(go.Scatter(x=trades.index, y=trades["drawdown_pct"], name="Drawdown", mode="lines", fill="tozeroy",
+                             line=dict(width=0.8, color=C["red"]), fillcolor="rgba(227,73,72,0.3)", hovertemplate="%{y:.1f}%"))
+    return fig
+
+
+def straddle_vs_gamma_theta(trades: pd.DataFrame) -> go.Figure:
+    fig = _base("Realized P&L vs the gamma-theta identity, per trade (% of spot)", height=360, hovermode="closest",
+                xaxis=dict(title="½ Σ Γ S² (σ²impl dt − r²)", showgrid=False, ticksuffix="%"),
+                yaxis=dict(gridcolor=GRID, zeroline=True, zerolinecolor=MUTED, ticksuffix="%", title="Simulated hedged P&L"))
+    fig.add_trace(go.Scatter(x=trades["gamma_theta_pct"], y=trades["pnl_pct"], mode="markers", name="trades",
+                             marker=dict(size=6, color=C["blue"], opacity=0.5),
+                             customdata=trades.index.strftime("%b %Y"), hovertemplate="%{customdata}: %{y:.2f}% vs %{x:.2f}%"))
+    lim = [float(min(trades["gamma_theta_pct"].min(), trades["pnl_pct"].min())), float(max(trades["gamma_theta_pct"].max(), trades["pnl_pct"].max()))]
+    fig.add_trace(go.Scatter(x=lim, y=lim, mode="lines", name="identity", line=dict(width=1.5, color=C["red"], dash="dot"), hoverinfo="skip"))
+    return fig
+
+
+def pnl_vs_realized(trades: pd.DataFrame) -> go.Figure:
+    fig = _base("Trade P&L (vol points) vs realized minus implied vol: the straddle is a short variance position", height=360,
+                hovermode="closest", xaxis=dict(title="Realized − implied (vol pts)", showgrid=False),
+                yaxis=dict(gridcolor=GRID, zeroline=True, zerolinecolor=MUTED, ticksuffix="", title="P&L / vega (vol pts)"))
+    x = trades["realized"] - trades["implied"]
+    fig.add_trace(go.Scatter(x=x, y=trades["pnl_vol_pts"], mode="markers", name="straddle",
+                             marker=dict(size=6, color=C["blue"], opacity=0.5), customdata=trades.index.strftime("%b %Y"),
+                             hovertemplate="%{customdata}: %{y:.1f} pts at %{x:+.1f}"))
+    fig.add_trace(go.Scatter(x=x, y=trades["var_swap_pts"], mode="markers", name="variance swap (same vega)",
+                             marker=dict(size=5, color=C["orange"], opacity=0.5, symbol="diamond"), hovertemplate="%{y:.1f} pts"))
+    return fig
+
+
+def forward_curve(fc: pd.DataFrame) -> go.Figure:
+    fig = _base("Forward vols from the VIX term structure", height=340)
+    for i, col in enumerate(fc.columns):
+        fig.add_trace(go.Scatter(x=fc.index, y=fc[col], name=col, mode="lines", line=dict(width=1.3, color=SERIES[i]),
+                                 hovertemplate="%{y:.1f}%"))
+    return fig
+
+
+def event_implied_vs_realized(tab: pd.DataFrame) -> go.Figure:
+    fig = _base("FOMC days: implied move read the day before vs realized close-to-close move", height=360, hovermode="x",
+                yaxis=dict(gridcolor=GRID, zeroline=True, zerolinecolor=MUTED, ticksuffix="%"))
+    fig.add_trace(go.Bar(x=tab.index, y=tab["realized_abs_move_pct"], name="Realized |move|",
+                         marker=dict(color=C["blue"], line=dict(width=0)), hovertemplate="%{y:.2f}%"))
+    fig.add_trace(go.Scatter(x=tab.index, y=tab["implied_move_pct"], name="Implied move", mode="markers",
+                             marker=dict(size=7, color=C["red"], symbol="diamond"), hovertemplate="%{y:.2f}%"))
+    fig.update_layout(bargap=0.4)
+    return fig
+
+
+def strategy_paths(paths: pd.DataFrame) -> go.Figure:
+    fig = _base("Sell every month vs sell only when the gap is wide: cumulative P&L (% of spot)", height=360,
+                yaxis=dict(gridcolor=GRID, zeroline=True, zerolinecolor=MUTED, ticksuffix="%"))
+    for i, col in enumerate(paths.columns):
+        fig.add_trace(go.Scatter(x=paths.index, y=paths[col], name=col, mode="lines", line=dict(width=1.6, color=SERIES[i]),
+                                 hovertemplate="%{y:.1f}%"))
+    return fig

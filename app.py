@@ -16,7 +16,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from vol_dashboard import charts, crude, forecast, metrics as m  # noqa: E402
+from vol_dashboard import charts, crude, events, forecast, hedging, metrics as m, signal as sg  # noqa: E402
 from vol_dashboard.vix import replicate_vix  # noqa: E402
 from vol_dashboard.data import futures_curve, load_closes, load_ohlc, option_chain  # noqa: E402
 from vol_dashboard.options import clean_chain, skew_metrics  # noqa: E402
@@ -62,6 +62,18 @@ def forecasts(ticker: str, vol_index: str | None, start: str, offline: bool) -> 
 @st.cache_data(ttl=6 * 3600, show_spinner=False)
 def crude_contracts(root: str, exchange: str, offline: bool) -> dict:
     return crude.load_contracts(root, exchange, offline=offline)
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def straddle_backtest(ticker: str, vol_index: str, offline: bool, cost_bps: float, spread_pts: float) -> pd.DataFrame:
+    px = load_ohlc(ticker, start="2005-01-01", offline=offline)["Close"]
+    iv = load_ohlc(vol_index, start="2005-01-01", offline=offline)["Close"]
+    return hedging.backtest_short_straddle(px, iv, hedge_cost_bps=cost_bps, option_spread_vol_pts=spread_pts)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def live_event_move(ticker: str, event: pd.Timestamp) -> dict:
+    return events.implied_move_from_chain(ticker, event)
 
 
 def skew_history_df() -> pd.DataFrame:
@@ -112,7 +124,7 @@ else:
     cols[2].metric("Implied 30d", "no CBOE index")
 
 tabs = st.tabs(["Overview", "Realized vs implied", "Vol cone", "Term structure", "Skew", "Commodity curve",
-                "VIX replication", "Forecasting", "Crude research"])
+                "VIX replication", "Forecasting", "Crude research", "Harvesting vol"])
 
 # ---------- Overview ----------
 
@@ -378,3 +390,101 @@ with tabs[8]:
                 f"**{by.loc['Contango', 'avg_vrp']:+.1f} pts** in contango, positive {by.loc['Backwardation', 'vrp_positive']:.0f}% vs "
                 f"{by.loc['Contango', 'vrp_positive']:.0f}% of days. Contango is when the crude vol seller gets hurt."
             )
+
+# ---------- Harvesting vol ----------
+
+with tabs[9]:
+    st.subheader("How the premium is actually earned, what it costs, and when it is priced")
+    if not asset.vol_index:
+        st.info("This section needs a CBOE implied vol index. Select the S&P 500, Nasdaq 100, WTI or gold.")
+    else:
+        # --- 1. delta-hedged straddle
+        st.markdown("#### 1. Short 1-month ATM straddle, delta-hedged daily at the implied vol")
+        c1, c2 = st.columns(2)
+        cost_bps = c1.slider("Hedge cost (bps per rebalance)", 0.0, 5.0, 1.0, 0.5)
+        spread_pts = c2.slider("Option bid-ask (vol pts below mid when selling)", 0.0, 2.0, 0.5, 0.25)
+        tr = straddle_backtest(asset.underlying, asset.vol_index, offline, cost_bps, spread_pts)
+        ss = hedging.straddle_stats(tr)
+        c = st.columns(6)
+        c[0].metric("Trades", ss["trades"])
+        c[1].metric("Avg P&L / trade", fmt(ss["avg_pnl_pct"], "%", 2), f"{ss['avg_pnl_vol_pts']:+.1f} vol pts", delta_color="off")
+        c[2].metric("Hit ratio", fmt(ss["hit_ratio"], "%", 0))
+        c[3].metric("Sharpe (net)", fmt(ss["sharpe"], "", 2))
+        c[4].metric("Worst trade", fmt(ss["worst_pct"], "%", 1), ss["worst_date"].strftime("%b %Y"), delta_color="off")
+        c[5].metric("Max drawdown", fmt(ss["max_drawdown_pct"], "%", 1))
+        c1, c2 = st.columns(2)
+        c1.plotly_chart(charts.straddle_cum(tr), use_container_width=True)
+        c2.plotly_chart(charts.straddle_vs_gamma_theta(tr), use_container_width=True)
+        st.plotly_chart(charts.pnl_vs_realized(tr), use_container_width=True)
+        st.markdown(
+            f"The straddle sold at the {asset.vol_index} level earns on average **{ss['avg_premium_pct']:.1f}% of spot in premium** and keeps "
+            f"**{ss['avg_pnl_pct']:.2f}%** after the hedge and {ss['avg_cost_pct']:.2f}% of costs. The gamma-theta identity "
+            f"$\\tfrac{{1}}{{2}}\\sum_t \\Gamma_t S_t^2(\\sigma_{{impl}}^2\\,dt - r_t^2)$ explains **{ss['gamma_theta_corr']*100:.0f}%** of the trade-by-trade P&L: "
+            "the seller is paid the gap between implied and realized variance, weighted by gamma. The scatter against a variance swap of "
+            "the same vega shows the path dependence: same realized-minus-implied, very different P&L depending on where spot sat when gamma was large."
+        )
+
+        # --- 2. forward vol and FOMC
+        st.markdown("#### 2. Forward vol and the price of the next FOMC")
+        ts = closes(tuple(VIX_TERM), "2011-01-01", offline)
+        spx_close = ohlc("^GSPC", "2011-01-01", offline)["Close"]
+        fc_curve = events.forward_curve_history(ts)
+        ev_hist = events.event_premium_history(ts, spx_close)
+        ev_tab = events.event_table(ev_hist, spx_close)
+        nxt = events.next_event(pd.Timestamp.today().normalize())
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            st.plotly_chart(charts.forward_curve(fc_curve), use_container_width=True)
+        with c2:
+            st.plotly_chart(charts.event_implied_vs_realized(ev_tab), use_container_width=True)
+        summ = events.event_premium_summary(ev_hist)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Avg implied FOMC move (term structure)", fmt(ev_tab["implied_move_pct"].mean(), "%", 2), f"{len(ev_tab)} meetings since 2015", delta_color="off")
+        c2.metric("Avg realized |move| on FOMC day", fmt(ev_tab["realized_abs_move_pct"].mean(), "%", 2))
+        c3.metric("VIX9D − forward 9d-30d, FOMC inside vs not", f"{summ.loc['FOMC within 9 days', 'avg_excess_vol_pts']:+.2f} vs {summ.loc['No FOMC within 9 days', 'avg_excess_vol_pts']:+.2f} pts")
+        st.markdown(
+            "Forward vol between two tenors is $\\sigma_f^2 = (T_2\\sigma_2^2 - T_1\\sigma_1^2)/(T_2 - T_1)$. When a FOMC sits inside the "
+            "9-day window, VIX9D carries its variance on top of the forward: the excess is the market's price for the meeting. "
+            "**Event vol is not overpriced the way generic vol is**: FOMC days realize about what is implied, while the month as a whole "
+            "realizes several points less than the VIX. The carry lives in the days with no scheduled news. "
+            "The term-structure read is floored at zero when the 9-day tenor sits below the forward (steep contango), so it understates in calm years."
+        )
+        if nxt is not None and asset.option_proxy:
+            with st.spinner(f"Reading {asset.option_proxy} expiries around the {nxt.date()} FOMC..."):
+                live = live_event_move(asset.option_proxy, nxt)
+            if "error" in live:
+                st.caption(f"Live read unavailable: {live['error']}")
+            else:
+                c = st.columns(4)
+                c[0].metric(f"Next FOMC {nxt.date()}", f"{live['event_move_base_30d_pct']:.2f}%", "implied move, base = 30d ATM", delta_color="off")
+                c[1].metric("Same, base = next-expiry forward", f"{live['event_move_base_fwd_pct']:.2f}%", "polluted by other events", delta_color="off")
+                c[2].metric(f"ATM IV expiring {live['expiry_1'].date()}", f"{live['atm_iv_1']:.1f}%", f"vs {live['atm_iv_30d']:.1f}% at 30d", delta_color="off")
+                c[3].metric("Normal daily move (30d ATM)", f"{live['base_daily_move_30d_pct']:.2f}%")
+                st.caption("From the ATM vols of the two expiries on and after the event: total variance to the first expiry minus the normal days "
+                           "leaves the event's variance. Delayed quotes; rerun during US hours.")
+
+        # --- 3. the gap signal
+        st.markdown("#### 3. Is the implied-minus-model gap a timing signal?")
+        fc, _ = forecasts(asset.underlying, asset.vol_index, start, offline)
+        if "HAR+IV" in fc:
+            cond = sg.conditional_premium(fc)
+            twg = sg.trades_with_gap(tr, fc)
+            stats_tbl, paths = sg.strategy_comparison(twg)
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**Forward VRP by gap bucket (daily)**")
+                st.dataframe(cond.round(2), use_container_width=True)
+            with c2:
+                st.markdown("**Straddle P&L by gap at trade date**")
+                st.dataframe(sg.pnl_by_gap(twg).round(2), use_container_width=True)
+            st.plotly_chart(charts.strategy_paths(paths), use_container_width=True)
+            st.dataframe(stats_tbl.round(2), use_container_width=True)
+            best = stats_tbl["sharpe"].idxmax()
+            st.markdown(
+                f"The premium grows with the gap ({cond['avg_vrp_pts'].iloc[2]:.1f} pts in the 2-4 bucket, {cond['avg_vrp_pts'].iloc[-1]:.1f} pts above 6) "
+                f"but the best risk-adjusted rule is **{best}**: skipping months loses more carry than it avoids losses. "
+                "The gap tells you how much you are paid, not when the crash comes. That is the honest answer, and the reason systematic "
+                "vol sellers size by regime rather than switch on and off."
+            )
+        else:
+            st.info("Gap signal needs a CBOE implied index with history.")

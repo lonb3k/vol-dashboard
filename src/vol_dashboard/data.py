@@ -124,3 +124,19 @@ def option_chain(ticker: str, target_days: int = 30) -> tuple[pd.DataFrame, pd.T
     hist = tk.history(period="5d")
     spot = float(hist["Close"].iloc[-1]) if not hist.empty else float("nan")
     return df, expiry, spot
+
+
+def option_chain_for_expiry(ticker: str, expiry: pd.Timestamp) -> tuple[pd.DataFrame, pd.Timestamp, float]:
+    """Calls and puts for one exact listed expiry (same layout as `option_chain`)."""
+    tk = yf.Ticker(ticker)
+    chain = tk.option_chain(expiry.strftime("%Y-%m-%d"))
+    cols = ["strike", "lastPrice", "impliedVolatility", "bid", "ask", "volume", "openInterest"]
+    df = pd.concat([chain.calls[cols].assign(type="call"), chain.puts[cols].assign(type="put")], ignore_index=True)
+    df = df.rename(columns={"impliedVolatility": "iv_yahoo", "lastPrice": "last"})
+    hist = tk.history(period="5d")
+    spot = float(hist["Close"].iloc[-1]) if not hist.empty else float("nan")
+    return df, expiry, spot
+
+
+def listed_expiries(ticker: str) -> list[pd.Timestamp]:
+    return [pd.Timestamp(e) for e in yf.Ticker(ticker).options]

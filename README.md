@@ -33,6 +33,24 @@ OVX in this sample (2020's super-contango at 100+ vol dominates), but it does so
 premium: selling crude vol earned +4.3 points on average in backwardation versus -0.6 in
 contango.
 
+**4. The premium is earned by hedging, and the hedging P&L is the gamma-theta identity.**
+`hedging.py` sells a one-month ATM straddle at the VIX, delta-hedges it every close on the
+real S&P path, and holds to expiry, with hedge costs and an option bid-ask. Since 2005: 261
+trades, 79% winners, about 0.6% of spot per month after costs, worst month September 2008.
+The identity ½ Σ Γ S² (σ²impl dt − r²) explains 98% of the trade-by-trade P&L, and a scatter
+against a variance swap of the same vega shows the straddle's path dependence.
+
+**5. Event vol is fairly priced; generic vol is not.**
+`events.py` extracts forward vols from the VIX term structure and the variance the 9-day tenor
+carries for a FOMC inside its window. Over 94 meetings since 2015 the market priced a 0.69%
+move and the S&P realized 0.80%. The carry lives in the days with no scheduled news. Live, the
+same arithmetic on the two SPY expiries around the next FOMC gives the implied move for that day.
+
+**6. The implied-minus-model gap tells you how much you are paid, not when to sell.**
+`signal.py` buckets the gap between the VIX and the HAR+IV forecast: the forward premium rises
+from 3 to 6 points as the gap widens, but selling only on wide gaps does not beat selling every
+month on a risk-adjusted basis. Skipping months loses more carry than it avoids losses.
+
 ![skew](docs/skew.jpg)
 
 ## What the dashboard shows
@@ -48,6 +66,7 @@ contango.
 | **VIX replication** | CBOE methodology on SPY, strip contributions by strike, gap to the official print |
 | **Forecasting** | HAR-RV vs GARCH vs implied vs HAR+IV, loss table (RMSE, QLIKE, Mincer-Zarnowitz) and forecast plots |
 | **Crude research** | Samuelson effect today and pooled since 2018, Dec/Dec spread history, OVX and VRP by curve regime |
+| **Harvesting vol** | Delta-hedged short straddle backtest with costs, gamma-theta identity, forward vols and FOMC event premium (history and live), implied-minus-model gap as a signal |
 
 ## Decisions, and why
 
@@ -74,13 +93,20 @@ contango.
 - **Dec/Dec spread as the curve gauge** because both legs have years of history on free data,
   while the true front-month spread cannot be rebuilt once contracts expire.
 
+- **Hedging at the implied vol, not the realized.** A desk hedges at the vol it sold; hedging at
+  the realized vol would smooth the P&L but is not implementable.
+- **Costs in the straddle backtest**: 1 bp per rebalance on the index and 0.5 vol point of
+  bid-ask on the option, both adjustable in the app. Gross numbers would be marketing.
+- **FOMC only, hard-coded.** CPI and payrolls would need 150 more dates; the FOMC is where the
+  event premium is cleanest to read in the VIX9D.
+
 ## Tests
 
 ```bash
 .venv/bin/python -m pytest -q tests
 ```
 
-Thirteen tests check the finance, not the plumbing: the four realized estimators recover the
+Twenty-two tests check the finance, not the plumbing. Among them: the four realized estimators recover the
 sigma of a simulated GBM and Parkinson's efficiency gain is where Parkinson (1980) says it is;
 Black-76 round-trips price to IV; the implied forward is recovered from a chain priced off a
 forward away from spot; the risk reversal has the right sign on put-skewed and call-skewed
@@ -129,6 +155,9 @@ src/vol_dashboard/
   vix.py                    CBOE variance strip, VIX replication
   forecast.py               HAR-RV, GARCH, implied, out-of-sample evaluation
   crude.py                  contract histories, Samuelson panel, Dec/Dec spread, curve regimes
+  hedging.py                short straddle delta-hedging simulator, gamma-theta identity
+  events.py                 forward vols, FOMC calendar, event premium, live implied move
+  signal.py                 implied-minus-HAR+IV gap, conditional premium, strategy comparison
   charts.py                 Plotly figures
 scripts/snapshot_skew.py    daily skew capture
 tests/                      pytest suites on the finance
