@@ -427,7 +427,7 @@ def build_sheet(offline: bool = False, start: str = "2015-01-01") -> dict:
             f"curve in {curve_state}. The market charges {gap:+.1f} points over the HAR+IV model"
             + (f"; FOMC in {days_to} day(s)." if days_to is not None and days_to <= 9 else "."))
     if ideas:
-        lede += f" Top idea: {ideas[0]['title'].lower()}."
+        lede += f" Top idea: {ideas[0]['title'][0].lower() + ideas[0]['title'][1:]}."
 
     return {
         "project": "vol_dashboard", "slug": "vol", "title": "Volatility", "subtitle": "Equity indices and commodities: realized vs implied",
