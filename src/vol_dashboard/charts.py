@@ -170,3 +170,97 @@ def futures_curve(curve: pd.DataFrame, name: str) -> go.Figure:
                              customdata=curve["contract"], hovertemplate="%{customdata}: %{y:,.2f}"))
     fig.update_layout(showlegend=False)
     return fig
+
+
+# ---------- VIX replication ----------
+
+def vix_strip(strip: pd.DataFrame, title: str) -> go.Figure:
+    fig = _base(title, height=340, hovermode="closest",
+                xaxis=dict(title="Strike", showgrid=False),
+                yaxis=dict(gridcolor=GRID, zeroline=False, ticksuffix="", title="dK/K² · Q(K)"))
+    colors = {"put": C["blue"], "call": C["orange"], "atm": C["red"]}
+    for side in ("put", "atm", "call"):
+        sub = strip[strip["side"] == side]
+        fig.add_trace(go.Bar(x=sub["strike"], y=sub["contribution"], name=f"{side}s" if side != "atm" else "K0",
+                             marker=dict(color=colors[side], line=dict(width=0)),
+                             hovertemplate="K=%{x}  contrib=%{y:.2e}"))
+    fig.update_layout(bargap=0.15)
+    return fig
+
+
+# ---------- forecasting ----------
+
+def forecast_lines(fc: pd.DataFrame, models: list[str]) -> go.Figure:
+    fig = _base("Out-of-sample 21-day vol forecasts vs realized", height=400)
+    fig.add_trace(go.Scatter(x=fc.index, y=fc["target"], name="Realized next 21d", mode="lines",
+                             line=dict(width=2, color=TEXT), hovertemplate="%{y:.1f}%"))
+    for i, mdl in enumerate(models):
+        fig.add_trace(go.Scatter(x=fc.index, y=fc[mdl], name=mdl, mode="lines",
+                                 line=dict(width=1.3, color=SERIES[i]), hovertemplate="%{y:.1f}%"))
+    return fig
+
+
+def mz_scatter(fc: pd.DataFrame, model: str) -> go.Figure:
+    fig = _base(f"Mincer-Zarnowitz: realized vs {model}", height=360, hovermode="closest",
+                xaxis=dict(title=f"{model} forecast", showgrid=False, ticksuffix="%"),
+                yaxis=dict(gridcolor=GRID, zeroline=False, ticksuffix="%", title="Realized next 21d"))
+    d = fc.dropna(subset=["target", model])
+    fig.add_trace(go.Scatter(x=d[model], y=d["target"], mode="markers", name="days",
+                             marker=dict(size=5, color=C["blue"], opacity=0.35),
+                             hovertemplate="%{x:.1f}% -> %{y:.1f}%"))
+    lim = [0, float(max(d[model].max(), d["target"].max()) * 1.05)]
+    fig.add_trace(go.Scatter(x=lim, y=lim, mode="lines", name="unbiased (45°)",
+                             line=dict(width=1.5, color=C["red"], dash="dot"), hoverinfo="skip"))
+    return fig
+
+
+# ---------- crude research ----------
+
+def samuelson_today(df: pd.DataFrame) -> go.Figure:
+    fig = _base("Today: 60-day realized vol by contract vs time to expiry", height=360, hovermode="closest",
+                xaxis=dict(title="Months to expiry", showgrid=False))
+    fig.add_trace(go.Scatter(x=df["ttm_months"], y=df["rv"], mode="lines+markers", name="Contract",
+                             line=dict(width=2, color=C["blue"]), marker=dict(size=7),
+                             customdata=df["contract"], hovertemplate="%{customdata}: %{y:.1f}% at %{x:.1f}m"))
+    fig.update_layout(showlegend=False)
+    return fig
+
+
+def samuelson_pooled(curve: pd.DataFrame) -> go.Figure:
+    fig = _base("Pooled since 2018: realized vol by months-to-expiry bucket", height=360, hovermode="x",
+                xaxis=dict(title="Months to expiry", showgrid=False, type="category"))
+    x = list(curve.index.astype(str))
+    fig.add_trace(go.Scatter(x=x + x[::-1], y=list(curve["q75"]) + list(curve["q25"])[::-1], fill="toself",
+                             fillcolor=SEQ[1], line=dict(width=0), name="25th / 75th pct", hoverinfo="skip"))
+    fig.add_trace(go.Scatter(x=x, y=curve["median_rv"], mode="lines+markers", name="Median",
+                             line=dict(width=2, color=SEQ[5]), marker=dict(size=8),
+                             customdata=curve["obs"], hovertemplate="%{y:.1f}%  (%{customdata} contract-days)"))
+    return fig
+
+
+def spread_vs_vol(panel: pd.DataFrame) -> go.Figure:
+    fig = _base("Curve shape vs implied vol (daily, since 2018)", height=380, hovermode="closest",
+                xaxis=dict(title="Dec/Dec spread, % (positive = backwardation)", showgrid=False, ticksuffix="%"),
+                yaxis=dict(gridcolor=GRID, zeroline=False, ticksuffix="%", title="OVX"))
+    for regime, color in (("Backwardation", C["orange"]), ("Contango", C["blue"])):
+        d = panel[panel["regime"] == regime]
+        fig.add_trace(go.Scatter(x=d["spread"], y=d["implied"], mode="markers", name=regime,
+                                 marker=dict(size=5, color=color, opacity=0.4),
+                                 customdata=d.index.strftime("%Y-%m-%d"),
+                                 hovertemplate="%{customdata}: spread %{x:.1f}%, OVX %{y:.1f}%"))
+    fig.add_vline(x=0, line=dict(color=MUTED, width=1, dash="dot"))
+    return fig
+
+
+# ---------- skew history ----------
+
+def skew_history(hist: pd.DataFrame, metric: str = "rr25") -> go.Figure:
+    fig = _base(f"{metric} history, 30-day tenor (own daily snapshots)", height=360,
+                yaxis=dict(gridcolor=GRID, zeroline=True, zerolinecolor=MUTED, ticksuffix=" pts"))
+    assets = list(hist["asset"].unique())[:8]
+    for i, a in enumerate(assets):
+        d = hist[hist["asset"] == a]
+        fig.add_trace(go.Scatter(x=pd.to_datetime(d["date"]), y=d[metric], mode="lines+markers", name=a,
+                                 line=dict(width=1.5, color=SERIES[i]), marker=dict(size=6),
+                                 hovertemplate="%{y:+.2f}"))
+    return fig

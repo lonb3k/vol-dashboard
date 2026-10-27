@@ -13,7 +13,8 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from vol_dashboard import charts, metrics as m  # noqa: E402
+from vol_dashboard import charts, crude, forecast, metrics as m  # noqa: E402
+from vol_dashboard.vix import replicate_vix  # noqa: E402
 from vol_dashboard.data import futures_curve, load_closes, load_ohlc, option_chain  # noqa: E402
 from vol_dashboard.options import clean_chain, skew_metrics  # noqa: E402
 from vol_dashboard.universe import BY_NAME, UNIVERSE, VIX_EXTRAS, VIX_TERM  # noqa: E402
@@ -40,6 +41,29 @@ def chain(ticker: str, target_days: int):
 @st.cache_data(ttl=3600, show_spinner=False)
 def curve(root: str, exchange: str) -> pd.DataFrame:
     return futures_curve(root, exchange)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def vix_replication(ticker: str) -> dict:
+    return replicate_vix(ticker)
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def forecasts(ticker: str, vol_index: str | None, start: str, offline: bool) -> tuple[pd.DataFrame, pd.DataFrame]:
+    px = load_ohlc(ticker, start=start, offline=offline)
+    iv = load_ohlc(vol_index, start=start, offline=offline)["Close"] if vol_index else None
+    fc = forecast.run_forecasts(px, iv)
+    return fc, forecast.evaluate(fc)
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def crude_contracts(root: str, exchange: str, offline: bool) -> dict:
+    return crude.load_contracts(root, exchange, offline=offline)
+
+
+def skew_history_df() -> pd.DataFrame:
+    path = Path(__file__).parent / "data" / "skew_history.csv"
+    return pd.read_csv(path) if path.exists() else pd.DataFrame()
 
 
 def fmt(x: float, suffix: str = "%", digits: int = 1) -> str:
@@ -84,7 +108,8 @@ else:
     iv_now = np.nan
     cols[2].metric("Implied 30d", "no CBOE index")
 
-tabs = st.tabs(["Overview", "Realized vs implied", "Vol cone", "Term structure", "Skew", "Commodity curve"])
+tabs = st.tabs(["Overview", "Realized vs implied", "Vol cone", "Term structure", "Skew", "Commodity curve",
+                "VIX replication", "Forecasting", "Crude research"])
 
 # ---------- Overview ----------
 
@@ -212,6 +237,14 @@ with tabs[4]:
             with st.expander("Chain"):
                 st.dataframe(cleaned[["type", "strike", "moneyness", "mid", "bid", "ask", "iv_pct", "delta", "volume", "openInterest"]]
                              .rename(columns={"iv_pct": "iv %"}).round(3), use_container_width=True, hide_index=True)
+    hist = skew_history_df()
+    if not hist.empty:
+        st.subheader("Skew history from daily snapshots")
+        h30 = hist[hist["tenor_target"] == 30]
+        metric = st.radio("Metric", ["rr25", "bf25", "atm_iv", "skew_90_110"], horizontal=True)
+        st.plotly_chart(charts.skew_history(h30, metric), use_container_width=True)
+        st.caption(f"{hist['date'].nunique()} snapshot day(s) so far, captured by `scripts/snapshot_skew.py` "
+                   "(GitHub Actions, weekdays after the US close). Nobody sells this history for free, so it is built here.")
 
 # ---------- Commodity curve ----------
 
@@ -236,3 +269,109 @@ with tabs[5]:
         st.plotly_chart(charts.futures_curve(cv, a.name), use_container_width=True)
         st.caption("Backwardation: spot scarcity, front month above deferred, positive roll yield for longs. "
                    "In crude, backwardation usually comes with elevated OVX; contango with calmer vol.")
+
+# ---------- VIX replication ----------
+
+with tabs[6]:
+    st.subheader("Rebuilding the VIX from SPY options with the CBOE methodology")
+    st.markdown(
+        "The VIX is the square root of a 30-day **variance swap rate**, not an average of implied vols: "
+        "a strip of OTM options weighted by $1/K^2$, for two expiries bracketing 30 days, interpolated in total variance. "
+        "$\\sigma^2 = \\frac{2}{T}\\sum_i \\frac{\\Delta K_i}{K_i^2} e^{RT} Q(K_i) - \\frac{1}{T}\\left(\\frac{F}{K_0}-1\\right)^2$"
+    )
+    res = vix_replication("SPY")
+    if "error" in res:
+        st.warning(res["error"])
+    else:
+        vix_series = ohlc("^VIX", start, offline)["Close"]
+        official = float(vix_series.iloc[-1])
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Replicated from SPY", f"{res['vix']:.2f}")
+        c2.metric("Official VIX (last close)", f"{official:.2f}", f"{res['vix'] - official:+.2f} gap", delta_color="off")
+        c3.metric("Near term", f"{100*np.sqrt(res['near'].variance):.2f}%", f"{res['near'].expiry.date()} ({res['near'].days}d)", delta_color="off")
+        c4.metric("Next term", f"{100*np.sqrt(res['next'].variance):.2f}%", f"{res['next'].expiry.date()} ({res['next'].days}d)", delta_color="off")
+        c1, c2 = st.columns(2)
+        c1.plotly_chart(charts.vix_strip(res["near"].strip, f"Near-term strip, F={res['near'].forward:.2f}, K0={res['near'].k0:.0f}, {len(res['near'].strip)} strikes"), use_container_width=True)
+        c2.plotly_chart(charts.vix_strip(res["next"].strip, f"Next-term strip, F={res['next'].forward:.2f}, K0={res['next'].k0:.0f}, {len(res['next'].strip)} strikes"), use_container_width=True)
+        st.markdown(
+            f"**Puts carry {res['near'].put_share*100:.0f}% of the near-term variance** although they are half the strikes: "
+            "that is the skew inside the VIX. Residual gap vs the official print comes from SPY vs SPX (dividends, "
+            "delayed quotes, slightly different expiries), and the official number is the previous close while the chain is live."
+        )
+
+# ---------- Forecasting ----------
+
+with tabs[7]:
+    st.subheader("Does the option market forecast vol better than the past does?")
+    st.caption("Expanding window, refit monthly, 21-day horizon, from two years after the start date. "
+               "HAR-RV (Corsi 2009) on log Parkinson / 5d / 22d realized; GARCH(1,1) by MLE; the CBOE index as a direct forecast; HAR with log implied added.")
+    with st.spinner("Fitting models..."):
+        fc, ev = forecasts(asset.underlying, asset.vol_index, start, offline)
+    if fc.empty:
+        st.warning("Not enough history.")
+    else:
+        best_rmse, best_qlike = ev["RMSE (pts)"].idxmin(), ev["QLIKE"].idxmin()
+        st.dataframe(ev.style.format({"Bias (pts)": "{:+.2f}", "RMSE (pts)": "{:.2f}", "QLIKE": "{:.3f}",
+                                      "MZ alpha": "{:+.2f}", "MZ beta": "{:.2f}", "MZ R2": "{:.3f}"})
+                     .highlight_min(subset=["RMSE (pts)", "QLIKE"], color="#cde2fb"), use_container_width=True)
+        models = [c for c in fc.columns if c != "target"]
+        st.plotly_chart(charts.forecast_lines(fc, models), use_container_width=True)
+        pick = st.selectbox("Mincer-Zarnowitz plot", models, index=models.index("Implied") if "Implied" in models else 0)
+        st.plotly_chart(charts.mz_scatter(fc, pick), use_container_width=True)
+        msg = [f"Lowest RMSE: **{best_rmse}**. Lowest QLIKE: **{best_qlike}**."]
+        if "Implied" in ev.index:
+            b = ev.loc["Implied", "Bias (pts)"]
+            msg.append(f"Implied overshoots realized by **{b:+.1f} pts** on average: that bias is the variance risk premium, "
+                       "and the MZ beta below 1 says a point of implied is worth less than a point of future realized. "
+                       "Correcting the bias (HAR+IV) is what a desk's forecast actually does.")
+        st.markdown(" ".join(msg))
+        st.caption("Targets overlap day to day, so treat differences of a few hundredths as noise. QLIKE is the loss "
+                   "used in the forecasting literature (Patton 2011) because it is robust to a noisy realized proxy.")
+
+# ---------- Crude research ----------
+
+with tabs[8]:
+    st.subheader("WTI: the Samuelson effect and what the curve says about vol")
+    with st.spinner("Loading contract histories..."):
+        cs = crude_contracts("CL", "NYM", offline)
+    if len(cs) < 5:
+        st.warning("Not enough contract histories.")
+    else:
+        today_cs = crude.samuelson_same_date(cs)
+        panel = crude.samuelson_panel(cs)
+        pooled = crude.samuelson_curve(panel)
+        c1, c2 = st.columns(2)
+        c1.plotly_chart(charts.samuelson_today(today_cs), use_container_width=True)
+        c2.plotly_chart(charts.samuelson_pooled(pooled), use_container_width=True)
+        f, b = today_cs.iloc[0], today_cs.iloc[min(11, len(today_cs) - 1)]
+        st.markdown(
+            f"**Samuelson effect:** today the front contract ({f['contract']}, {f['ttm_months']:.1f} months) realizes "
+            f"**{f['rv']:.0f}%** vs **{b['rv']:.0f}%** for {b['contract']} at {b['ttm_months']:.0f} months. "
+            "The front of the curve absorbs inventory and OPEC news; the back is anchored by the marginal cost of production. "
+            "Pooled across every listed contract since 2018 the same decay appears, with a bump at the long end "
+            "where quotes are thin and 2020 dominates the sample."
+        )
+        with st.expander("Pooled table"):
+            st.dataframe(pooled.round(1), use_container_width=True)
+
+        st.subheader("Curve shape vs implied vol and the crude VRP")
+        spread, near, far = crude.dec_dec_spread(cs)
+        ovx = ohlc("^OVX", start, offline)["Close"]
+        clpx = ohlc("CL=F", start, offline)
+        res = crude.curve_vs_vol(spread, ovx, clpx)
+        st.plotly_chart(charts.single_series(spread, f"{near[:5]} / {far[:5]} calendar spread (positive = backwardation)", "%"), use_container_width=True)
+        c1, c2 = st.columns([1, 1])
+        c1.plotly_chart(charts.spread_vs_vol(res["panel"]), use_container_width=True)
+        with c2:
+            st.markdown("**By curve regime**")
+            st.dataframe(res["by_regime"].rename(columns={"days": "Days", "avg_implied": "Avg OVX", "avg_fwd_rv": "Avg fwd RV 21d",
+                                                           "avg_vrp": "Avg VRP", "vrp_positive": "VRP > 0 (%)"}).round(1), use_container_width=True)
+            by = res["by_regime"]
+            st.markdown(
+                f"Correlation between spread and OVX: **{res['corr_spread_implied']:+.2f}**. "
+                "The textbook link (backwardation = scarcity = high vol) does not survive this sample: 2020 put the curve in "
+                "super-contango with OVX above 100, and that episode dominates. What does hold is the **premium**: "
+                f"selling crude vol earned **{by.loc['Backwardation', 'avg_vrp']:+.1f} pts** on average in backwardation vs "
+                f"**{by.loc['Contango', 'avg_vrp']:+.1f} pts** in contango, positive {by.loc['Backwardation', 'vrp_positive']:.0f}% vs "
+                f"{by.loc['Contango', 'vrp_positive']:.0f}% of days. Contango is when the crude vol seller gets hurt."
+            )
