@@ -8,10 +8,13 @@ Free data has no history of the 25-delta risk reversal; this builds one.
 from __future__ import annotations
 
 import sys
+import warnings
 from datetime import date
 from pathlib import Path
 
 import pandas as pd
+
+warnings.filterwarnings("ignore")  # yfinance triggers pandas deprecation noise
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))

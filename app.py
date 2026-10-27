@@ -5,10 +5,13 @@ Run:  streamlit run app.py
 from __future__ import annotations
 
 import sys
+import warnings
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+warnings.filterwarnings("ignore")  # yfinance triggers pandas deprecation noise
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
