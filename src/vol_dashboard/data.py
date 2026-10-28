@@ -67,12 +67,15 @@ def load_closes(tickers: list[str], start: str = "2010-01-01", offline: bool = F
     return pd.DataFrame(series).sort_index()
 
 
-def futures_curve(root: str, exchange: str, n_months: int = 12) -> pd.DataFrame:
+def futures_curve(root: str, exchange: str, n_months: int = 12, offline: bool = False) -> pd.DataFrame:
     """Settlement of the next `n_months` listed futures contracts, e.g. CLZ26.NYM.
 
     Yahoo lists individual contracts under ROOT + month code + 2-digit year + .EXCHANGE.
     Returns columns: contract, expiry_month, price. Missing contracts are skipped.
     """
+    path = DATA_DIR / f"curve_{root}.csv"
+    if offline and path.exists():
+        return pd.read_csv(path, parse_dates=["expiry_month"])
     today = dt.date.today()
     rows = []
     year, month = today.year, today.month
@@ -94,7 +97,7 @@ def futures_curve(root: str, exchange: str, n_months: int = 12) -> pd.DataFrame:
         })
     curve = pd.DataFrame(rows)
     if not curve.empty:
-        curve.to_csv(DATA_DIR / f"curve_{root}.csv", index=False)
+        curve.to_csv(path, index=False)
     return curve
 
 

@@ -4,6 +4,7 @@ Run:  streamlit run app.py
 """
 from __future__ import annotations
 
+import os
 import sys
 import warnings
 from pathlib import Path
@@ -24,6 +25,11 @@ from vol_dashboard.universe import BY_NAME, UNIVERSE, VIX_EXTRAS, VIX_TERM  # no
 
 st.set_page_config(page_title="Vol Dashboard", page_icon="📈", layout="wide")
 
+# Shared hosts get rate-limited by Yahoo, so there the app opens on the CSV mirrors committed to the repo.
+# Streamlit Community Cloud mounts the repo under /mount/src, Hugging Face Spaces sets SPACE_ID.
+HOSTED = (str(Path(__file__).resolve()).startswith("/mount/src/") or "SPACE_ID" in os.environ
+          or os.environ.get("OFFLINE_DEFAULT") == "1")
+
 # ---------- cached loaders ----------
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -42,8 +48,8 @@ def chain(ticker: str, target_days: int):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def curve(root: str, exchange: str) -> pd.DataFrame:
-    return futures_curve(root, exchange)
+def curve(root: str, exchange: str, offline: bool) -> pd.DataFrame:
+    return futures_curve(root, exchange, offline=offline)
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -93,7 +99,10 @@ with st.sidebar:
     asset_name = st.selectbox("Asset", list(BY_NAME), index=0)
     start = st.date_input("History from", pd.Timestamp("2015-01-01")).strftime("%Y-%m-%d")
     rv_window = st.slider("Realized vol window (days)", 5, 126, 21)
-    offline = st.toggle("Offline (use cached CSV extracts)", value=False)
+    offline = st.toggle("Offline (use cached CSV extracts)", value=HOSTED,
+                        help="Off: live Yahoo prices and option chains. On: the CSV extracts in data/.")
+    if HOSTED and offline:
+        st.caption("Hosted demo: opens on the CSV snapshot committed to the repo. Switch offline off for live data and option chains.")
     st.divider()
     st.caption("Data: Yahoo Finance via yfinance, mirrored to `data/*.csv`. "
                "Implied vols are rebuilt from option mids with Black-76 on the implied forward.")
@@ -227,9 +236,15 @@ with tabs[4]:
         st.info("No optionable proxy configured.")
     else:
         target = st.select_slider("Target expiry (days)", [14, 30, 60, 90, 180], value=30)
-        raw, expiry, spot = chain(asset.option_proxy, target)
-        cleaned, info = clean_chain(raw, spot, expiry)
-        if cleaned.empty:
+        if offline:
+            raw, expiry, spot = pd.DataFrame(), pd.NaT, float("nan")
+        else:
+            raw, expiry, spot = chain(asset.option_proxy, target)
+        cleaned, info = clean_chain(raw, spot, expiry) if not raw.empty else (pd.DataFrame(), {})
+        if offline:
+            st.info(f"Live {asset.option_proxy} smile: switch offline off in the sidebar to read the chain. "
+                    "The daily snapshot history below is committed to the repo.")
+        elif cleaned.empty:
             st.warning(f"No usable quotes on {asset.option_proxy} right now.")
         else:
             sk = skew_metrics(cleaned)
@@ -268,9 +283,10 @@ with tabs[5]:
     pick = st.selectbox("Commodity", [a.name for a in commo],
                         index=[a.name for a in commo].index(asset.name) if asset.futures_root else 0)
     a = BY_NAME[pick]
-    cv = curve(a.futures_root, a.exchange)
+    cv = curve(a.futures_root, a.exchange, offline)
     if cv.empty or len(cv) < 2:
-        st.warning("Futures curve unavailable on Yahoo for this root.")
+        st.warning("No cached curve for this root: switch offline off to read it from Yahoo." if offline
+                   else "Futures curve unavailable on Yahoo for this root.")
     else:
         front, second = cv.iloc[0], cv.iloc[1]
         months = max((second["expiry_month"] - front["expiry_month"]).days / 30.4, 1)
@@ -294,8 +310,10 @@ with tabs[6]:
         "a strip of OTM options weighted by $1/K^2$, for two expiries bracketing 30 days, interpolated in total variance. "
         "$\\sigma^2 = \\frac{2}{T}\\sum_i \\frac{\\Delta K_i}{K_i^2} e^{RT} Q(K_i) - \\frac{1}{T}\\left(\\frac{F}{K_0}-1\\right)^2$"
     )
-    res = vix_replication("SPY")
-    if "error" in res:
+    res = {"error": "Live SPY chain: switch offline off in the sidebar to run the replication."} if offline else vix_replication("SPY")
+    if offline:
+        st.info(res["error"])
+    elif "error" in res:
         st.warning(res["error"])
     else:
         vix_series = ohlc("^VIX", start, offline)["Close"]
@@ -449,7 +467,9 @@ with tabs[9]:
             "realizes several points less than the VIX. The carry lives in the days with no scheduled news. "
             "The term-structure read is floored at zero when the 9-day tenor sits below the forward (steep contango), so it understates in calm years."
         )
-        if nxt is not None and asset.option_proxy:
+        if nxt is not None and asset.option_proxy and offline:
+            st.caption(f"Live implied move for the {nxt.date()} FOMC: switch offline off to read the {asset.option_proxy} chain.")
+        elif nxt is not None and asset.option_proxy:
             with st.spinner(f"Reading {asset.option_proxy} expiries around the {nxt.date()} FOMC..."):
                 live = live_event_move(asset.option_proxy, nxt)
             if "error" in live:

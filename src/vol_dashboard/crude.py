@@ -54,8 +54,8 @@ def list_contracts(root: str, exchange: str, n_months: int = 48) -> list[tuple[s
 
 def load_contract(code: str, offline: bool = False) -> pd.DataFrame:
     path = CONTRACT_DIR / f"{code.replace('.', '_')}.csv"
-    if offline and path.exists():
-        return pd.read_csv(path, index_col=0, parse_dates=True)
+    if offline:
+        return pd.read_csv(path, index_col=0, parse_dates=True) if path.exists() else pd.DataFrame()
     try:
         h = yf.Ticker(code).history(period="max", auto_adjust=False)
     except Exception:
