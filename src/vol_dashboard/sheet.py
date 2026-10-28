@@ -446,5 +446,5 @@ def build_sheet(offline: bool = False, start: str = "2015-01-01") -> dict:
             "VIX prices the skew, an ATM straddle does not get paid for it.",
         ],
         "warnings": warnings_,
-        "links": {"repo": REPO_URL, "streamlit": "streamlit run app.py (port 8501)"},
+        "links": {"repo": REPO_URL, "streamlit": "https://lonb3k-vol-dashboard.streamlit.app"},
     }

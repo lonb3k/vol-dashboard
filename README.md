@@ -2,6 +2,8 @@
 
 **Live morning sheet: [https://morning-sheet-olive.vercel.app/vol](https://morning-sheet-olive.vercel.app/vol)**, regenerated every weekday after the US close.
 
+**Interactive app: [lonb3k-vol-dashboard.streamlit.app](https://lonb3k-vol-dashboard.streamlit.app)**, opens on the committed data, no install needed.
+
 ![morning sheet](docs/morning_sheet.gif)
 
 Interactive Streamlit dashboard that compares **realized and implied volatility** across
