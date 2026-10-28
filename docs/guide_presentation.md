@@ -6,8 +6,8 @@ Objectif : que chaque chiffre affiché soit un chiffre que tu peux expliquer en 
 
 
 > **Démo en ligne (phase 2).** La « morning sheet » lit le dashboard à ta place et se régénère chaque
-> jour ouvré après la clôture US : [https://morning-sheet-nine.vercel.app/vol](https://morning-sheet-nine.vercel.app/vol). Les deux projets frères sont sur le même site
-> ([https://morning-sheet-nine.vercel.app/dispersion](https://morning-sheet-nine.vercel.app/dispersion), [https://morning-sheet-nine.vercel.app/basket](https://morning-sheet-nine.vercel.app/basket)). Le code est dans
+> jour ouvré après la clôture US : [https://morning-sheet-olive.vercel.app/vol](https://morning-sheet-olive.vercel.app/vol). Les deux projets frères sont sur le même site
+> ([https://morning-sheet-olive.vercel.app/dispersion](https://morning-sheet-olive.vercel.app/dispersion), [https://morning-sheet-olive.vercel.app/basket](https://morning-sheet-olive.vercel.app/basket)). Le code est dans
 > `src/vol_dashboard/sheet.py` ; chaque chiffre vient d'une fonction existante de `src/`. En entretien,
 > ouvre la sheet d'abord, l'app Streamlit ensuite pour les détails.
 

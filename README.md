@@ -1,6 +1,6 @@
 # Volatility Dashboard: equity indices and commodities
 
-**Live morning sheet: [https://morning-sheet-nine.vercel.app/vol](https://morning-sheet-nine.vercel.app/vol)**, regenerated every weekday after the US close.
+**Live morning sheet: [https://morning-sheet-olive.vercel.app/vol](https://morning-sheet-olive.vercel.app/vol)**, regenerated every weekday after the US close.
 
 ![morning sheet](docs/morning_sheet.gif)
 
@@ -151,7 +151,7 @@ historical worst case in the same regime, and the Plotly figures as JSON). It co
 - `python scripts/build_sheet.py [--offline]` writes `sheet/latest.json`.
 - The daily GitHub Actions workflow rebuilds it after the close and commits it.
 - The front end ([lonb3k/morning-sheet](https://github.com/lonb3k/morning-sheet), Next.js on Vercel)
-  reads that JSON and renders it at [https://morning-sheet-nine.vercel.app/vol](https://morning-sheet-nine.vercel.app/vol), next to the sheets of the
+  reads that JSON and renders it at [https://morning-sheet-olive.vercel.app/vol](https://morning-sheet-olive.vercel.app/vol), next to the sheets of the
   two sister projects. The Streamlit app stays the full interactive version.
 
 No financial logic lives in `sheet.py`: every number comes from a function that already exists in `src/`.
