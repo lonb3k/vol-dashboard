@@ -1,7 +1,9 @@
 """How the volatility risk premium is actually harvested: a short straddle, delta-hedged daily.
 
-Sell a one-month ATM straddle on the index at the implied vol (the VIX), hedge the delta every
-close with Black-Scholes at that same vol, hold to expiry. The realized P&L is
+Sell a one-month ATM straddle on the index at the at-the-money implied vol, hedge the delta every
+close with Black-Scholes at that same vol, hold to expiry. The ATM vol is not the VIX: VIX prices a
+variance swap and carries the skew, about 20% above ATM on the S&P in calm markets (see `atm.py`).
+Selling the straddle at the VIX would overstate its premium by the price of the skew. The realized P&L is
 
     premium - payoff + sum_t hedge_t * (S_{t+1} - S_t) - costs
 
@@ -53,10 +55,11 @@ def straddle_vega(S, K, sigma, tau):
 
 
 def hedge_one_trade(path: np.ndarray, sigma_impl: float, hedge_cost_bps: float = 1.0,
-                    option_spread_vol_pts: float = 0.5) -> dict:
+                    option_spread_vol_pts: float = 0.5, sigma_varswap: float | None = None) -> dict:
     """Short straddle on `path[0]`, expiring at `path[-1]`, hedged at each close.
 
-    path: closes from trade date to expiry (HORIZON + 1 points). sigma_impl in decimal.
+    path: closes from trade date to expiry (HORIZON + 1 points). sigma_impl (ATM vol) in decimal.
+    sigma_varswap: variance-swap strike for the comparison column (the model-free index); defaults to sigma_impl.
     Costs: proportional cost on every hedge trade, and the straddle sold `option_spread_vol_pts`
     below mid (half the bid-ask in vol).
     """
@@ -94,22 +97,24 @@ def hedge_one_trade(path: np.ndarray, sigma_impl: float, hedge_cost_bps: float =
         "gamma_theta_pct": gamma_theta / S0 * 100,
         "implied": sigma_impl * 100,
         "realized": realized * 100,
-        "var_swap_pts": (sigma_impl**2 - realized**2) / (2 * sigma_impl) * 100,  # variance swap P&L in vega-equivalent vol pts
+        "varswap_strike": (sigma_varswap or sigma_impl) * 100,
+        "var_swap_pts": ((sigma_varswap or sigma_impl) ** 2 - realized**2) / (2 * (sigma_varswap or sigma_impl)) * 100,  # short var swap, vega-equivalent vol pts
     }
 
 
 def backtest_short_straddle(close: pd.Series, implied: pd.Series, start: str | None = None,
                             hedge_cost_bps: float = 1.0, option_spread_vol_pts: float = 0.5,
-                            horizon: int = HORIZON) -> pd.DataFrame:
-    """One trade every `horizon` trading days: sell the ATM straddle at the implied index level,
-    hedge daily to expiry. Returns one row per trade, indexed by trade date."""
-    df = pd.DataFrame({"S": close, "iv": implied}).dropna()
+                            horizon: int = HORIZON, varswap: pd.Series | None = None) -> pd.DataFrame:
+    """One trade every `horizon` trading days: sell the ATM straddle at `implied` (ATM vol, points),
+    hedge daily to expiry. `varswap` (model-free index) sets the strike of the variance-swap
+    comparison. Returns one row per trade, indexed by trade date."""
+    df = pd.DataFrame({"S": close, "iv": implied, "vs": varswap if varswap is not None else implied}).dropna()
     if start:
         df = df[df.index >= pd.Timestamp(start)]
     rows = []
     for i in range(0, len(df) - horizon, horizon):
         path = df["S"].values[i:i + horizon + 1]
-        res = hedge_one_trade(path, df["iv"].iloc[i] / 100, hedge_cost_bps, option_spread_vol_pts)
+        res = hedge_one_trade(path, df["iv"].iloc[i] / 100, hedge_cost_bps, option_spread_vol_pts, df["vs"].iloc[i] / 100)
         res["date"] = df.index[i]
         res["expiry"] = df.index[i + horizon]
         rows.append(res)

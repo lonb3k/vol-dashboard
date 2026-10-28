@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 import plotly.io as pio
 
-from . import charts, crude, events, forecast, hedging, metrics as m, signal as sg
+from . import atm, charts, crude, events, forecast, hedging, metrics as m, signal as sg
 from .data import DATA_DIR, load_closes, load_ohlc
 from .universe import BY_NAME, UNIVERSE, VIX_EXTRAS, VIX_TERM
 
@@ -167,7 +167,9 @@ def build_sheet(offline: bool = False, start: str = "2015-01-01") -> dict:
     # ---------- straddle backtest + gap conditioning ----------
     px_long = load_ohlc(spx.underlying, start="2005-01-01", offline=offline)["Close"]
     vix_long = load_ohlc(spx.vol_index, start="2005-01-01", offline=offline)["Close"]
-    trades = hedging.backtest_short_straddle(px_long, vix_long)
+    skew_long = load_ohlc("^SKEW", start="2005-01-01", offline=offline)["Close"]
+    atm_long, _ = atm.atm_vol(spx.vol_index, vix_long, atm.load_vxo(offline=offline), skew_long)
+    trades = hedging.backtest_short_straddle(px_long, atm_long, varswap=vix_long)  # an ATM straddle sells at ATM vol, not at the VIX
     ss = hedging.straddle_stats(trades)
     twg = sg.trades_with_gap(trades, fc)
     by_gap = sg.pnl_by_gap(twg)
@@ -347,7 +349,7 @@ def build_sheet(offline: bool = False, start: str = "2015-01-01") -> dict:
         worst_date = in_b["pnl_pct"].idxmin()
         ideas.append({
             "title": "Sell the 1-month ATM S&P straddle, delta-hedged daily",
-            "direction": "short vol", "instrument": "SPX / SPY 1m ATM straddle at the VIX level, hedged at each close",
+            "direction": "short vol", "instrument": "SPX / SPY 1m ATM straddle at the ATM vol (about 0.8 x VIX), hedged at each close",
             "condition": f"VIX - HAR+IV gap in the '{gap_bucket}' bucket ({gap:+.1f} pts today)",
             "thesis": f"The market charges {gap:+.1f} points over the debiased model. In this bucket the straddle kept "
                       f"{float(row['avg_pnl_pct']):+.2f}% of spot per trade after hedge costs, {float(row['hit_%']):.0f}% winners.",
@@ -366,7 +368,7 @@ def build_sheet(offline: bool = False, start: str = "2015-01-01") -> dict:
         direction = "short vol" if exp_rb > 0 else "long vol"
         ideas.append({
             "title": "Sell 1-month S&P variance at the VIX" if exp_rb > 0 else "Own 1-month S&P variance",
-            "direction": direction, "instrument": "1m variance swap or VIX-level straddle, held to expiry",
+            "direction": direction, "instrument": "1m variance swap at the VIX, held to expiry (the premium sits in the wings, not at the money)",
             "condition": f"VIX / VIX3M = {ratio_now:.3f}, bucket '{rb_now}'",
             "thesis": f"With the curve in {curve_state}, the forward premium (VIX today minus realized over the next 21 days) averaged "
                       f"{exp_rb:+.1f} points in this bucket and was positive {float((in_rb['vrp'] > 0).mean() * 100):.0f}% of the time.",
@@ -380,7 +382,7 @@ def build_sheet(offline: bool = False, start: str = "2015-01-01") -> dict:
         short = c["avg_vrp"] > 0
         ideas.append({
             "title": "Sell WTI vol at the OVX level" if short else "Stay away from short crude vol",
-            "direction": "short vol" if short else "flat / long vol", "instrument": "USO / CL 1m straddle at OVX, delta-hedged",
+            "direction": "short vol" if short else "flat / long vol", "instrument": "USO / CL 1m variance at the OVX (crude ATM vol sits about 5% below OVX)",
             "condition": f"Dec/Dec spread {c['spread']:+.1f}%: curve in {c['regime'].lower()}",
             "thesis": f"OVX {c['ovx']:.1f} against {c['cl_rv']:.1f}% realized. In {c['regime'].lower()} the crude variance premium averaged "
                       f"{c['avg_vrp']:+.1f} points, positive {c['pos']:.0f}% of days. {'Contango is when the crude vol seller gets hurt.' if c['regime'] == 'Contango' else 'Scarcity regimes have paid the seller.'}",
@@ -439,7 +441,9 @@ def build_sheet(offline: bool = False, start: str = "2015-01-01") -> dict:
         "caveats": [
             "Free data: Yahoo Finance closes and CBOE indices. Option quotes are delayed; implied vols are rebuilt from mids with Black-76.",
             "Conditional statistics are in-sample averages over overlapping daily windows; treat small buckets as indicative.",
-            "The straddle backtest sells at the VIX level with 1 bp hedge cost and 0.5 vol point bid-ask; no margin, no financing.",
+            "The straddle backtest sells at the S&P ATM vol (VXO / sqrt(30/22) to 2021, then VIX x a ratio modelled on VIX and SKEW), "
+            "with 1 bp hedge cost and 0.5 vol point bid-ask; no margin, no financing. Sold at the VIX it would look far better: "
+            "VIX prices the skew, an ATM straddle does not get paid for it.",
         ],
         "warnings": warnings_,
         "links": {"repo": REPO_URL, "streamlit": "streamlit run app.py (port 8501)"},

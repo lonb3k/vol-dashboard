@@ -452,18 +452,30 @@ qui a assemblé.
 
 ### Le straddle delta-hedgé
 
-- On vend un straddle ATM à un mois au niveau du VIX, on couvre le delta chaque soir avec
-  Black-Scholes à cette même vol, on tient jusqu'à l'échéance. P&L = prime − payoff + P&L de
-  couverture − coûts.
+- On vend un straddle à la monnaie à un mois, on couvre le delta chaque soir avec Black-Scholes à
+  cette même vol, on tient jusqu'à l'échéance. P&L = prime − payoff + P&L de couverture − coûts.
+- **À quel prix on le vend, et le piège.** Le VIX n'est pas la vol à la monnaie. C'est le prix d'un
+  variance swap, qui intègre tout le smile, donc les puts de protection très chers. Un straddle à la
+  monnaie se vend à la vol à la monnaie, environ 0,8 × VIX sur le S&P. Une première version vendait
+  au VIX : elle créditait le straddle d'une prime qu'il ne touche jamais.
+- **Comment on obtient l'historique de vol à la monnaie.** Le VXO, l'ancien VIX de la CBOE (publié
+  jusqu'en 2021, disponible sur la FRED), était calculé avec huit options proches de la monnaie sur le
+  S&P 100. Il comptait en jours de bourse, ce qui le gonfle de √(30/22), soit environ 1,17 (Carr et Wu,
+  2006) : on le divise par ce facteur. Après 2021, on modélise le rapport vol à la monnaie / VIX à partir
+  du VIX et de l'indice SKEW (R² 0,62). Contrôle hors échantillon le 27 octobre 2026 : 0,76 prédit
+  contre 0,78 mesuré sur la chaîne SPY.
+- **Le résultat.** Vendu à la monnaie depuis 2005 : −0,11 % du spot par trade, 56 % de gagnants, Sharpe
+  −0,29. Vendu au VIX, le backtest naïf affichait +0,63 %, 79 % et 1,52. Le variance swap au VIX, lui,
+  rapporte +2,2 points de vol par mois. **La prime de variance est dans les ailes, pas à la monnaie** :
+  c'est le prix de l'assurance contre le krach. Même conclusion que la dispersion pour la corrélation.
+- **Les autres actifs.** Nasdaq et or : même chose (Sharpe −0,37 et −0,25). Pétrole : petite prime
+  (+0,24), parce que son skew penche vers les calls et que sa vol à la monnaie est proche de l'OVX.
 - **L'identité gamma-theta** : le P&L d'une option couverte vaut ½ Σ Γ S² (σ²impl dt − r²). Le
   vendeur encaisse l'écart entre variance implicite et variance réalisée, pondéré par le gamma.
   Le code le vérifie : 98 % de corrélation entre le P&L simulé et la formule.
 - **Path dependence** : à écart implicite-réalisée égal, le P&L varie selon l'endroit où le spot
   se trouvait quand le gamma était grand. Un variance swap n'a pas ce problème, d'où le nuage
   comparatif.
-- Chiffres S&P depuis 2005 : 261 trades, 79 % gagnants, 0,6 % du spot par mois après coûts,
-  pire mois septembre 2008. On couvre à la vol implicite parce que c'est la seule
-  implémentable : on ne connaît pas la réalisée à l'avance.
 
 ### Forward vol et FOMC
 
@@ -480,10 +492,19 @@ qui a assemblé.
 
 ### Le signal
 
-- Écart = implicite − prévision HAR+IV. Plus l'écart est grand, plus le premium futur est
-  grand (3 à 6 points), mais ne vendre que sur grand écart perd plus de carry qu'il n'évite de
-  pertes. **Résultat négatif assumé** : l'écart dit combien on est payé, pas quand ça craque.
+- Écart = implicite − prévision HAR+IV. Plus l'écart est grand, plus la prime de variance future est
+  grande (3 à 6 points). Mais pour le straddle à la monnaie, aucune règle de timing ne le rend
+  rentable : ne vendre que quand l'écart dépasse 4 points perd moins (Sharpe −0,15 contre −0,29), et perd
+  quand même. **Résultat négatif assumé** : l'écart dit combien le vendeur de variance est payé, pas
+  quand ça craque.
 
 **Question jury** : "Pourquoi ne pas couvrir à la vol réalisée ?" Parce qu'elle n'est connue
 qu'après. Couvrir à l'implicite donne un P&L path-dependent mais implémentable ; couvrir à la
 réalisée donnerait un P&L lisse mais fictif.
+
+**Question jury** : "Si le straddle ne rapporte rien, où est la prime de vol ?" Dans les ailes. Le
+variance swap au VIX rapporte 2,2 points de vol par mois parce qu'il est vendeur des puts éloignés,
+que les investisseurs paient cher pour se protéger. Le straddle à la monnaie ne vend pas ces puts.
+
+**Question jury** : "Votre VXO est sur le S&P 100, pas le S&P 500 ?" Oui, c'est une approximation. Les
+deux indices sont très corrélés, et le contrôle sur la chaîne SPY d'aujourd'hui tombe à 0,02 près.

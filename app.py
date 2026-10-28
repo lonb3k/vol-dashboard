@@ -17,7 +17,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from vol_dashboard import charts, crude, events, forecast, hedging, metrics as m, signal as sg  # noqa: E402
+from vol_dashboard import atm, charts, crude, events, forecast, hedging, metrics as m, signal as sg  # noqa: E402
 from vol_dashboard.vix import replicate_vix  # noqa: E402
 from vol_dashboard.data import futures_curve, load_closes, load_ohlc, option_chain  # noqa: E402
 from vol_dashboard.options import clean_chain, skew_metrics  # noqa: E402
@@ -71,10 +71,18 @@ def crude_contracts(root: str, exchange: str, offline: bool) -> dict:
 
 
 @st.cache_data(ttl=6 * 3600, show_spinner=False)
-def straddle_backtest(ticker: str, vol_index: str, offline: bool, cost_bps: float, spread_pts: float) -> pd.DataFrame:
+def straddle_backtest(ticker: str, vol_index: str, offline: bool, cost_bps: float, spread_pts: float,
+                      at_atm: bool = True) -> tuple[pd.DataFrame, str]:
+    """Short ATM straddle sold at the ATM vol proxy (default) or, to show the bias, at the model-free index."""
     px = load_ohlc(ticker, start="2005-01-01", offline=offline)["Close"]
     iv = load_ohlc(vol_index, start="2005-01-01", offline=offline)["Close"]
-    return hedging.backtest_short_straddle(px, iv, hedge_cost_bps=cost_bps, option_spread_vol_pts=spread_pts)
+    if at_atm:
+        skew = load_ohlc("^SKEW", start="2005-01-01", offline=offline)["Close"]
+        sold, how = atm.atm_vol(vol_index, iv, atm.load_vxo(offline=offline), skew)
+    else:
+        sold, how = iv, f"sold at the {vol_index} level, which prices the whole smile (overstates the premium)"
+    tr = hedging.backtest_short_straddle(px, sold, hedge_cost_bps=cost_bps, option_spread_vol_pts=spread_pts, varswap=iv)
+    return tr, how
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -418,10 +426,14 @@ with tabs[9]:
     else:
         # --- 1. delta-hedged straddle
         st.markdown("#### 1. Short 1-month ATM straddle, delta-hedged daily at the implied vol")
-        c1, c2 = st.columns(2)
+        c1, c2, c3 = st.columns(3)
         cost_bps = c1.slider("Hedge cost (bps per rebalance)", 0.0, 5.0, 1.0, 0.5)
         spread_pts = c2.slider("Option bid-ask (vol pts below mid when selling)", 0.0, 2.0, 0.5, 0.25)
-        tr = straddle_backtest(asset.underlying, asset.vol_index, offline, cost_bps, spread_pts)
+        sold_at = c3.radio("Sell the straddle at", ["ATM vol (realistic)", f"{asset.vol_index} level (overstated)"], 0,
+                           help="An ATM straddle trades at the at-the-money vol. The CBOE index is model-free: it prices a variance "
+                                "swap, which includes the expensive downside puts. On the S&P, ATM vol is about 0.8 x VIX.")
+        tr, sold_how = straddle_backtest(asset.underlying, asset.vol_index, offline, cost_bps, spread_pts, sold_at.startswith("ATM"))
+        st.caption(f"Strike vol: {sold_how}.")
         ss = hedging.straddle_stats(tr)
         c = st.columns(6)
         c[0].metric("Trades", ss["trades"])
@@ -435,8 +447,11 @@ with tabs[9]:
         c2.plotly_chart(charts.straddle_vs_gamma_theta(tr), use_container_width=True)
         st.plotly_chart(charts.pnl_vs_realized(tr), use_container_width=True)
         st.markdown(
-            f"The straddle sold at the {asset.vol_index} level earns on average **{ss['avg_premium_pct']:.1f}% of spot in premium** and keeps "
-            f"**{ss['avg_pnl_pct']:.2f}%** after the hedge and {ss['avg_cost_pct']:.2f}% of costs. The gamma-theta identity "
+            f"Sold at {'the ATM vol' if sold_at.startswith('ATM') else 'the ' + asset.vol_index + ' level'}, the straddle collects on average "
+            f"**{ss['avg_premium_pct']:.1f}% of spot in premium** and keeps **{ss['avg_pnl_pct']:+.2f}%** after the hedge and {ss['avg_cost_pct']:.2f}% of costs, "
+            f"while a short variance swap at the {asset.vol_index} earned **{tr['var_swap_pts'].mean():+.1f} vol points** a month over the same dates. "
+            "At the money, implied vol has been close to what the index then realized; the variance premium sits in the wings, in the "
+            "downside puts that a variance swap is short and an ATM straddle is not. The gamma-theta identity "
             f"$\\tfrac{{1}}{{2}}\\sum_t \\Gamma_t S_t^2(\\sigma_{{impl}}^2\\,dt - r_t^2)$ explains **{ss['gamma_theta_corr']*100:.0f}%** of the trade-by-trade P&L: "
             "the seller is paid the gap between implied and realized variance, weighted by gamma. The scatter against a variance swap of "
             "the same vega shows the path dependence: same realized-minus-implied, very different P&L depending on where spot sat when gamma was large."
@@ -500,11 +515,18 @@ with tabs[9]:
             st.plotly_chart(charts.strategy_paths(paths), use_container_width=True)
             st.dataframe(stats_tbl.round(2), use_container_width=True)
             best = stats_tbl["sharpe"].idxmax()
+            best_sr = float(stats_tbl.loc[best, "sharpe"])
+            if best == "Always":
+                verdict = "skipping months loses more carry than it avoids losses"
+            elif best_sr > 0:
+                verdict = f"the filter helps (Sharpe {best_sr:.2f}), at the cost of trading fewer months"
+            else:
+                verdict = f"it only loses less (Sharpe {best_sr:.2f}): no timing rule makes this straddle pay"
             st.markdown(
-                f"The premium grows with the gap ({cond['avg_vrp_pts'].iloc[2]:.1f} pts in the 2-4 bucket, {cond['avg_vrp_pts'].iloc[-1]:.1f} pts above 6) "
-                f"but the best risk-adjusted rule is **{best}**: skipping months loses more carry than it avoids losses. "
-                "The gap tells you how much you are paid, not when the crash comes. That is the honest answer, and the reason systematic "
-                "vol sellers size by regime rather than switch on and off."
+                f"The forward variance premium grows with the gap ({cond['avg_vrp_pts'].iloc[2]:.1f} pts in the 2-4 bucket, "
+                f"{cond['avg_vrp_pts'].iloc[-1]:.1f} pts above 6). For the straddle, the best risk-adjusted rule is **{best}**, and {verdict}. "
+                "The gap tells you how much the variance seller is paid, not when the crash comes, and an ATM straddle does not collect "
+                "the part of the premium that sits in the wings."
             )
         else:
             st.info("Gap signal needs a CBOE implied index with history.")

@@ -34,3 +34,17 @@ def test_flat_path_keeps_the_premium():
 def test_costs_reduce_pnl():
     path = h.simulate_gbm_path(0.2, seed=3)
     assert h.hedge_one_trade(path, 0.2, 5, 1)["pnl_pct"] < h.hedge_one_trade(path, 0.2, 0, 0)["pnl_pct"]
+
+
+def test_short_download_merges_into_the_mirror(tmp_path, monkeypatch):
+    import pandas as pd
+    from vol_dashboard import data as dm
+    long = pd.DataFrame({c: 1.0 for c in dm.OHLC}, index=pd.bdate_range("2010-01-01", periods=100, name="Date"))
+    path = tmp_path / "idx_TEST.csv"
+    long.to_csv(path)
+    monkeypatch.setattr(dm, "_cache_path", lambda t: path)
+    recent = pd.DataFrame({c: 2.0 for c in dm.OHLC}, index=pd.bdate_range("2010-05-01", periods=10))
+    monkeypatch.setattr(dm.yf, "download", lambda *a, **k: recent)
+    out = dm.load_ohlc("TEST", start="2010-05-01")
+    assert out.index[0] >= pd.Timestamp("2010-05-01") and (out.loc[recent.index, "Close"] == 2.0).all()
+    assert len(pd.read_csv(path)) == 100   # the mirror keeps its full history, updated where new data came in

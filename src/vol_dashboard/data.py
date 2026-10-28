@@ -51,8 +51,12 @@ def load_ohlc(ticker: str, start: str = "2010-01-01", offline: bool = False) -> 
     df = raw[OHLC].dropna(subset=["Close"]).copy()
     df.index = pd.to_datetime(df.index).tz_localize(None)
     df.index.name = "Date"
+    if path.exists():  # merge into the mirror: a short request must never clobber a long history
+        old = pd.read_csv(path, index_col=0, parse_dates=True)
+        df = df.combine_first(old)[OHLC]
+        df.index.name = "Date"
     df.to_csv(path)
-    return df
+    return df[df.index >= pd.Timestamp(start)]
 
 
 def load_closes(tickers: list[str], start: str = "2010-01-01", offline: bool = False) -> pd.DataFrame:

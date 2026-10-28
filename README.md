@@ -13,7 +13,7 @@ along the futures curve.
 
 ![overview](docs/overview.jpg)
 
-## Three results worth defending
+## Results worth defending
 
 **1. The VIX, rebuilt from SPY options, lands within 0.2 point of the official print.**
 The VIX is the square root of a 30-day variance swap rate, not an average of implied vols.
@@ -37,12 +37,31 @@ OVX in this sample (2020's super-contango at 100+ vol dominates), but it does so
 premium: selling crude vol earned +4.3 points on average in backwardation versus -0.6 in
 contango.
 
-**4. The premium is earned by hedging, and the hedging P&L is the gamma-theta identity.**
-`hedging.py` sells a one-month ATM straddle at the VIX, delta-hedges it every close on the
-real S&P path, and holds to expiry, with hedge costs and an option bid-ask. Since 2005: 261
-trades, 79% winners, about 0.6% of spot per month after costs, worst month September 2008.
-The identity ½ Σ Γ S² (σ²impl dt − r²) explains 98% of the trade-by-trade P&L, and a scatter
-against a variance swap of the same vega shows the straddle's path dependence.
+**4. At the money, index vol is fairly priced: the variance premium sits in the wings.**
+`hedging.py` sells a one-month ATM straddle, delta-hedges it every close on the real path and
+holds to expiry, with hedge costs and an option bid-ask. The strike vol matters. VIX and the
+other CBOE indices price a variance swap, which loads the whole smile including the expensive
+downside puts; an ATM straddle trades at the ATM vol, about 0.8 x VIX on the S&P. `atm.py`
+rebuilds S&P ATM vol history from the old CBOE index VXO (eight near-the-money S&P 100 options,
+1986-2021, divided by sqrt(30/22) for its trading-day convention, Carr and Wu 2006), then from a
+model of ATM / VIX on ln VIX and the CBOE SKEW index (R² 0.62; out of sample on 27 Oct 2026 it
+gives 0.76 against 0.78 measured live on the SPY chain). Other assets use a ratio measured once
+on the live ETF chain.
+
+| 1m straddle, delta-hedged daily, 0.5 vol pt bid-ask | Sold at the index level | Sold at ATM vol |
+|---|---|---|
+| S&P 500 since 2005, 261 trades: P&L / trade | +0.63% of spot | −0.11% |
+| Hit ratio / Sharpe | 79% / 1.52 | 56% / −0.29 |
+| Short variance swap at the VIX, same dates | +2.2 vol pts | +2.2 vol pts |
+
+Selling the straddle at the VIX, as a naive backtest does, credits it with a premium it never
+collects. At the money, implied vol has run only half a point above realized (15.8 vs 15.3), and a
+half-point bid-ask eats it. Nasdaq and gold tell the same story (Sharpe −0.37 and −0.25 at ATM);
+crude keeps a small premium (+0.24) because its skew leans to calls and its ATM vol sits near the
+OVX. The variance premium is real (+2.2 vol points a month on a variance swap), but it is paid for
+the wings: it is crash insurance, the same conclusion the dispersion project reaches for
+correlation. The gamma-theta identity ½ Σ Γ S² (σ²impl dt − r²) still explains 98% of the
+trade-by-trade P&L.
 
 **5. Event vol is fairly priced; generic vol is not.**
 `events.py` extracts forward vols from the VIX term structure and the variance the 9-day tenor
@@ -51,9 +70,9 @@ move and the S&P realized 0.80%. The carry lives in the days with no scheduled n
 same arithmetic on the two SPY expiries around the next FOMC gives the implied move for that day.
 
 **6. The implied-minus-model gap tells you how much you are paid, not when to sell.**
-`signal.py` buckets the gap between the VIX and the HAR+IV forecast: the forward premium rises
-from 3 to 6 points as the gap widens, but selling only on wide gaps does not beat selling every
-month on a risk-adjusted basis. Skipping months loses more carry than it avoids losses.
+`signal.py` buckets the gap between the VIX and the HAR+IV forecast: the forward variance premium
+rises from 3 to 6 points as the gap widens. For the ATM straddle, no timing rule makes it pay:
+selling only when the gap exceeds 4 points loses less (Sharpe −0.15 against −0.29), and still loses.
 
 ![skew](docs/skew.jpg)
 
@@ -101,6 +120,11 @@ month on a risk-adjusted basis. Skipping months loses more carry than it avoids 
   the realized vol would smooth the P&L but is not implementable.
 - **Costs in the straddle backtest**: 1 bp per rebalance on the index and 0.5 vol point of
   bid-ask on the option, both adjustable in the app. Gross numbers would be marketing.
+- **The straddle is sold at ATM vol, not at the VIX.** The app keeps a switch to the VIX level to
+  show how much the naive choice inflates the result (Sharpe 1.52 instead of −0.29 on the S&P).
+- **A one-day calibration, said out loud.** Outside the S&P, the ATM / index ratio is measured once
+  on the live ETF chain and held constant; the S&P ratio moves with VIX and SKEW (0.79 in calm
+  markets, 0.89 when VIX is above 40 on the VXO years).
 - **FOMC only, hard-coded.** CPI and payrolls would need 150 more dates; the FOMC is where the
   event premium is cleanest to read in the VIX9D.
 
@@ -176,6 +200,7 @@ src/vol_dashboard/
   forecast.py               HAR-RV, GARCH, implied, out-of-sample evaluation
   crude.py                  contract histories, Samuelson panel, Dec/Dec spread, curve regimes
   hedging.py                short straddle delta-hedging simulator, gamma-theta identity
+  atm.py                    ATM vol history: VXO to 2021, then a VIX and SKEW model; measured ratios elsewhere
   events.py                 forward vols, FOMC calendar, event premium, live implied move
   signal.py                 implied-minus-HAR+IV gap, conditional premium, strategy comparison
   charts.py                 Plotly figures
