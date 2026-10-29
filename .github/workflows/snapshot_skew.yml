@@ -24,7 +24,7 @@ jobs:
       - name: Commit history and sheet
         run: |
           git config user.name "skew-bot"
-          git config user.email "skew-bot@users.noreply.github.com"
+          git config user.email "skew-bot@localhost"
           git add data/skew_history.csv sheet/latest.json
           git diff --cached --quiet || git commit -m "Skew snapshot and morning sheet $(date -u +%F)"
           git push
