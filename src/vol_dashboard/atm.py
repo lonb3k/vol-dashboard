@@ -83,6 +83,8 @@ def atm_vol(vol_index: str, index_close: pd.Series, vxo: pd.Series | None = None
         atm, _, fit = sp_atm_vol(index_close, vxo, skew)
         return atm, (f"VXO / sqrt(30/22) to {fit['end']:%b %Y}, then VIX x ({fit['a']:.3f} + {fit['b_lnvix']:.3f} ln VIX "
                      f"{fit['c_skew']:+.4f} SKEW), R² {fit['r2']:.2f}")
+    if vol_index.startswith("BBGIV:"):
+        return index_close, "Bloomberg constant-maturity 30-day ATM implied vol (local extract)"
     ratio = MEASURED_RATIO.get(vol_index)
     if ratio is None:
         return index_close, "no ATM history: sold at the model-free index (overstates the premium)"

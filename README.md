@@ -205,6 +205,35 @@ the free feed; the front-month series includes roll gaps; aluminium's free curve
 .venv/bin/python scripts/build_hedge_note.py      # writes sheet/hedging.json
 ```
 
+## Local Bloomberg mode and calibration
+
+The free feed is US-listed; a European corporate desk hedges on ICE Brent, ICE gasoil, TTF, LME metals and Euronext wheat.
+`src/vol_dashboard/bloomberg.py` reads extracts pulled from a Bloomberg terminal (BDH prices, contract curves with open
+interest, 30-day and 3-month constant-maturity ATM implied vol) from a folder **outside the repo** (`VOL_BLOOMBERG_DIR`, else
+`../bloomberg_private`). Licensed data is never committed; when the folder is absent the app runs exactly as before.
+
+With the folder present, the sidebar offers "Bloomberg extracts (local only)": the European benchmarks join every tab, and a
+**Corporate hedging** tab shows, per market, the forward a hedge locks in, the vol to price it with (Bloomberg implied, else
+CBOE, else the calibrated estimate, else realized), and the cost of the usual structures (`hedge_costs.py`, Black-76 on the
+future, flat vol): ATM put, 90% put, 110% call, and the zero-cost producer and consumer collars. `research.py` adds what
+history says about that vol: the variance premium (1-month implied minus the realized vol of the next 21 days), whether an
+inverted vol curve (1M above 3M) has preceded a fall in implied, and how well each free contract tracks its benchmark.
+
+`scripts/calibrate_from_bloomberg.py` turns the extracts into `src/vol_dashboard/calibration.json`: summary statistics only,
+no series. The public note uses it in two ways:
+
+- **Implied estimate where no implied is published.** For Brent, 1-month implied has run at a median 1.08 times 21-day
+  realized since 2015, with a 5-point typical error (17 points at the 90th percentile, in vol spikes). The note shows that
+  estimate and says how rough it is.
+- **Proxy audit.** Weekly return correlation and vol ratio of each free contract against the benchmark a European client
+  actually hedges, since November 2021: heating oil tracks gasoil (0.86, vol 0.96x), aluminium tracks LME (0.92, 1.09x);
+  COMEX copper overstates LME vol by about a fifth, CBOT wheat overstates Euronext by a quarter, and Henry Hub says nothing
+  about TTF (0.13).
+
+```bash
+.venv/bin/python scripts/calibrate_from_bloomberg.py   # needs the local extracts
+```
+
 ## Run it
 
 ```bash

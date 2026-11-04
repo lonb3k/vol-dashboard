@@ -1,0 +1,58 @@
+{
+  "implied_from_realized": {
+    "Brent Crude": {
+      "ratio": 1.077,
+      "mae_pts": 5.35,
+      "p90_err_pts": 17.22,
+      "n": 2992,
+      "start": "2015-02-02",
+      "end": "2026-11-02",
+      "source": "Bloomberg CO1 30-day ATM implied vol against its 21-day realized vol"
+    }
+  },
+  "proxy_audit": {
+    "Brent Crude": {
+      "benchmark": "Brent (ICE)",
+      "free_ticker": "BZ=F",
+      "weekly_corr": 1.0,
+      "vol_ratio": 1.0
+    },
+    "NY heating oil": {
+      "benchmark": "Gasoil (ICE)",
+      "free_ticker": "HO=F",
+      "weekly_corr": 0.86,
+      "vol_ratio": 0.96
+    },
+    "Natural Gas": {
+      "benchmark": "TTF gas (ICE Endex)",
+      "free_ticker": "NG=F",
+      "weekly_corr": 0.13,
+      "vol_ratio": 1.04
+    },
+    "Copper": {
+      "benchmark": "Copper (LME)",
+      "free_ticker": "HG=F",
+      "weekly_corr": 0.83,
+      "vol_ratio": 1.21
+    },
+    "Aluminium": {
+      "benchmark": "Aluminium (LME)",
+      "free_ticker": "ALI=F",
+      "weekly_corr": 0.92,
+      "vol_ratio": 1.09
+    },
+    "Wheat": {
+      "benchmark": "Milling wheat (Euronext)",
+      "free_ticker": "ZW=F",
+      "weekly_corr": 0.75,
+      "vol_ratio": 1.25
+    },
+    "Sugar": {
+      "benchmark": "Sugar No. 11 (ICE)",
+      "free_ticker": "SB=F",
+      "weekly_corr": 1.0,
+      "vol_ratio": 1.0
+    }
+  },
+  "note": "Derived statistics from Bloomberg extracts (school terminal); no Bloomberg series is stored here."
+}

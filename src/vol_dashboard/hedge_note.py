@@ -16,6 +16,8 @@ Every sentence is a rule applied to those numbers; nothing is a recommendation.
 from __future__ import annotations
 
 import datetime as dt
+import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -32,6 +34,17 @@ GROUPS = {"Energy": ["Brent Crude", "WTI Crude", "Natural Gas"],
 UNITS = {"Brent Crude": "$/bbl", "WTI Crude": "$/bbl", "Natural Gas": "$/MMBtu", "Copper": "$/lb", "Aluminium": "$/t",
          "Gold": "$/oz", "Silver": "$/oz", "Wheat": "c/bu", "Corn": "c/bu", "Soybeans": "c/bu"}
 CURVE_HISTORY = DATA_DIR / "curve_history.csv"
+CALIBRATION = Path(__file__).with_name("calibration.json")
+
+
+def calibration() -> dict:
+    """Derived constants calibrated on Bloomberg history (scripts/calibrate_from_bloomberg.py); no series."""
+    return json.loads(CALIBRATION.read_text()) if CALIBRATION.exists() else {"implied_from_realized": {}, "proxy_audit": {}}
+
+
+def implied_estimate(name: str, rv: float) -> float | None:
+    c = calibration()["implied_from_realized"].get(name)
+    return None if c is None else rv * c["ratio"]
 # Precious metals list every month on Yahoo, but only these delivery months trade: the others carry
 # stale settlements that make the curve zigzag. Every other market keeps all its listed months.
 ACTIVE_MONTHS = {"GC": {2, 4, 6, 8, 10, 12}, "SI": {3, 5, 7, 9, 12}}
@@ -88,7 +101,7 @@ def vol_metrics(px: pd.DataFrame, implied: pd.Series | None) -> dict:
     rv = m.rv_close_to_close(px, 21).dropna()
     now = float(rv.iloc[-1])
     out = {"rv21": now, "pct_1y": percentile(rv.iloc[-252:], now), "pct_5y": percentile(rv.iloc[-1260:], now),
-           "iv": np.nan, "iv_rv": np.nan}
+           "iv": np.nan, "iv_rv": np.nan, "iv_est": np.nan}
     if implied is not None and not implied.dropna().empty:
         out["iv"] = float(implied.dropna().iloc[-1])
         out["iv_rv"] = out["iv"] - now
@@ -97,6 +110,14 @@ def vol_metrics(px: pd.DataFrame, implied: pd.Series | None) -> dict:
     out["chg_1m"] = (c.iloc[-1] / c.iloc[-22] - 1) * 100 if len(c) > 22 else np.nan
     out["last_close"] = c.index[-1]
     return out
+
+
+def add_estimate(name: str, v: dict) -> dict:
+    if np.isnan(v["iv"]):
+        est = implied_estimate(name, v["rv21"])
+        if est is not None:
+            v["iv_est"] = est
+    return v
 
 
 def vol_band(pct: float) -> str:
@@ -128,6 +149,10 @@ def vol_sentence(name: str, v: dict) -> str:
         rich = "well above" if v["iv_rv"] > 5 else "close to" if abs(v["iv_rv"]) <= 5 else "below"
         out += (f" Implied vol, which is what an option actually costs, is {v['iv']:.0f}%: {rich} what has been realized "
                 f"({v['iv_rv']:+.1f} points).")
+    elif not np.isnan(v.get("iv_est", np.nan)):
+        c = calibration()["implied_from_realized"][name]
+        out += (f" Implied vol is estimated at about {v['iv_est']:.0f}%: on Bloomberg history since {c['start'][:4]}, implied has "
+                f"run {c['ratio']:.2f} times realized, with a typical error of {c['mae_pts']:.0f} points.")
     return out
 
 
@@ -182,7 +207,7 @@ def build_hedge_note(offline: bool = False, start: str = "2015-01-01") -> dict:
             cv = cv[cv["expiry_month"].dt.month.isin(ACTIVE_MONTHS[a.futures_root])].reset_index(drop=True)
         iv = load_ohlc(a.vol_index, start=start, offline=offline)["Close"] if a.vol_index else None
         curves[a.name] = cv
-        rows[a.name] = {**curve_metrics(cv), **vol_metrics(px, iv)}
+        rows[a.name] = {**curve_metrics(cv), **add_estimate(a.name, vol_metrics(px, iv))}
     table = pd.DataFrame(rows).T
     as_of = max(r["last_close"] for r in rows.values())
     if not offline:
@@ -252,9 +277,18 @@ def build_hedge_note(offline: bool = False, start: str = "2015-01-01") -> dict:
                                         for n, r in table.iterrows()]}})
     sections.append({"title": "Volatility and moves", "paragraphs": ["Realized vol of the front-month series over 21 sessions, "
                                                                       "with its percentile over one and five years. Implied only where CBOE publishes it."],
-                     "table": {"columns": ["Market", "RV 21d", "Pct 1y", "Pct 5y", "Implied", "IV - RV", "1 week", "1 month"],
+                     "table": {"columns": ["Market", "RV 21d", "Pct 1y", "Pct 5y", "Implied", "Implied est.", "IV - RV", "1 week", "1 month"],
                                "rows": [[n, _num(r["rv21"], 1), _num(r["pct_1y"], 0), _num(r["pct_5y"], 0), _num(r["iv"], 1),
-                                         _num(r["iv_rv"], 1), _num(r["chg_1w"], 1), _num(r["chg_1m"], 1)] for n, r in table.iterrows()]}})
+                                         _num(r["iv_est"], 1), _num(r["iv_rv"], 1), _num(r["chg_1w"], 1), _num(r["chg_1m"], 1)]
+                                        for n, r in table.iterrows()]}})
+    audit = calibration()["proxy_audit"]
+    if audit:
+        sections.append({"title": "How the free contracts track the European benchmarks", "paragraphs": [
+            "Measured once on Bloomberg history, weekly returns since November 2021. A ratio above 1 means the free contract "
+            "is more volatile than the benchmark a European client hedges."],
+            "table": {"columns": ["Free contract", "European benchmark", "Weekly correlation", "Vol ratio"],
+                      "rows": [[f"{k} ({v['free_ticker']})", v["benchmark"], v["weekly_corr"], v["vol_ratio"]]
+                               for k, v in audit.items()]}})
 
     figs = [_fig(_curves_chart(g, [n for n in names if n in curves], curves), f"curve_{g.lower()}") for g, names in GROUPS.items()]
     figs.append(_fig(_vol_chart(table.astype({"pct_5y": float})), "vol_percentiles"))
@@ -270,8 +304,11 @@ def build_hedge_note(offline: bool = False, start: str = "2015-01-01") -> dict:
         "caveats": [
             "Free data: Yahoo Finance closes of NYMEX, COMEX and CBOT futures. Copper and aluminium are COMEX contracts, not LME; "
             "Brent is the NYMEX last-day financial contract. No TTF, power, coal, softs or pulp on the free feed.",
-            "Implied vol history exists only for WTI (OVX) and gold (GVZ). Elsewhere the realized-vol percentile stands in for what "
-            "options cost, which holds only if implied tracks realized.",
+            "Implied vol history exists only for WTI (OVX) and gold (GVZ). Brent's implied vol is estimated from realized with a "
+            "ratio calibrated on Bloomberg history (typical error about 5 points, much more in stress); elsewhere the realized-vol "
+            "percentile stands in for what options cost, which holds only if implied tracks realized.",
+            "The free contracts are US benchmarks: Henry Hub barely tracks European gas (TTF), and COMEX copper and CBOT wheat "
+            "are more volatile than their LME and Euronext counterparts (see the table above).",
             "The front-month series rolls from contract to contract, so weekly and monthly moves include roll gaps.",
             "Curves come from listed contracts only (12 to 13 months out, fewer for grains and aluminium), not from swap curves. "
             "Deferred metal contracts trade thinly, so intermediate points can be noisy; the 12-month comparison uses the same "

@@ -17,7 +17,8 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from vol_dashboard import atm, charts, crude, events, forecast, hedging, metrics as m, signal as sg  # noqa: E402
+from vol_dashboard import atm, bloomberg as bbg, charts, crude, events, forecast, hedging, metrics as m, signal as sg  # noqa: E402
+from vol_dashboard import hedge_costs, hedge_note, research  # noqa: E402
 from vol_dashboard.vix import replicate_vix  # noqa: E402
 from vol_dashboard.data import futures_curve, load_closes, load_ohlc, option_chain  # noqa: E402
 from vol_dashboard.options import clean_chain, skew_metrics  # noqa: E402
@@ -104,7 +105,12 @@ def fmt(x: float, suffix: str = "%", digits: int = 1) -> str:
 with st.sidebar:
     st.title("Vol Dashboard")
     st.caption("Equity indices and commodities. Realized vs implied, cone, term structure, skew.")
-    asset_name = st.selectbox("Asset", list(BY_NAME), index=0)
+    use_bbg = (st.toggle("Bloomberg extracts (local only)", value=True,
+                         help=f"Reads {bbg.folder()}. Never committed, never shown on the hosted app.")
+               if bbg.available() else False)
+    UNI = UNIVERSE + (bbg.assets() if use_bbg else [])
+    BYN = {a.name: a for a in UNI}
+    asset_name = st.selectbox("Asset", list(BYN), index=0)
     start = st.date_input("History from", pd.Timestamp("2015-01-01")).strftime("%Y-%m-%d")
     rv_window = st.slider("Realized vol window (days)", 5, 126, 21)
     offline = st.toggle("Offline (use cached CSV extracts)", value=HOSTED,
@@ -115,7 +121,7 @@ with st.sidebar:
     st.caption("Data: Yahoo Finance via yfinance, mirrored to `data/*.csv`. "
                "Implied vols are rebuilt from option mids with Black-76 on the implied forward.")
 
-asset = BY_NAME[asset_name]
+asset = BYN[asset_name]
 px = ohlc(asset.underlying, start, offline)
 implied = ohlc(asset.vol_index, start, offline)["Close"].rename(asset.vol_index) if asset.vol_index else None
 
@@ -141,14 +147,14 @@ else:
     cols[2].metric("Implied 30d", "no CBOE index")
 
 tabs = st.tabs(["Overview", "Realized vs implied", "Vol cone", "Term structure", "Skew", "Commodity curve",
-                "VIX replication", "Forecasting", "Crude research", "Harvesting vol"])
+                "VIX replication", "Forecasting", "Crude research", "Harvesting vol", "Corporate hedging"])
 
 # ---------- Overview ----------
 
 with tabs[0]:
     st.subheader("Cross-asset snapshot")
     rows = []
-    for a in UNIVERSE:
+    for a in UNI:
         p = ohlc(a.underlying, start, offline)
         if p.empty:
             continue
@@ -287,10 +293,10 @@ with tabs[4]:
 # ---------- Commodity curve ----------
 
 with tabs[5]:
-    commo = [a for a in UNIVERSE if a.futures_root]
+    commo = [a for a in UNI if a.futures_root]
     pick = st.selectbox("Commodity", [a.name for a in commo],
                         index=[a.name for a in commo].index(asset.name) if asset.futures_root else 0)
-    a = BY_NAME[pick]
+    a = BYN[pick]
     cv = curve(a.futures_root, a.exchange, offline)
     if cv.empty or len(cv) < 2:
         st.warning("No cached curve for this root: switch offline off to read it from Yahoo." if offline
@@ -530,3 +536,81 @@ with tabs[9]:
             )
         else:
             st.info("Gap signal needs a CBOE implied index with history.")
+
+
+# ---------- Corporate hedging ----------
+
+with tabs[10]:
+    st.subheader("What a hedge locks in, and what it costs")
+    st.caption("For a corporate client: the forward a swap locks in, against the cost of optionality. "
+               + ("Bloomberg extracts are loaded: European benchmarks and their real implied vols are in the list." if use_bbg
+                  else "Free data: implied vol only where CBOE publishes it (WTI, gold); elsewhere realized vol, or the "
+                       "estimate calibrated on Bloomberg history where one exists."))
+    hedgeable = [a for a in UNI if a.asset_class.startswith("Commodity") and a.futures_root]
+    names = [a.name for a in hedgeable]
+    pick = st.selectbox("Market", names, index=names.index(asset.name) if asset.name in names else 0, key="hedge_pick")
+    a = BYN[pick]
+    pxh = ohlc(a.underlying, "2015-01-01", offline)
+    cvh = curve(a.futures_root, a.exchange, offline)
+    if pxh.empty or cvh is None or len(cvh) < 2:
+        st.warning("Prices or curve unavailable for this market.")
+    else:
+        cvh = cvh.sort_values("expiry_month").reset_index(drop=True)
+        cm = hedge_note.curve_metrics(cvh)
+        rv = research.realized(pxh["Close"]).dropna()
+        iv1 = iv3 = np.nan
+        source = "realized vol (no implied history)"
+        if a.vol_index:
+            ivs = ohlc(a.vol_index, "2015-01-01", offline)["Close"].dropna()
+            iv1 = float(ivs.iloc[-1])
+            source = "Bloomberg ATM implied" if a.vol_index.startswith("BBGIV:") else f"{a.vol_index} (CBOE, model-free)"
+            if a.vol_index.startswith("BBGIV:"):
+                terms = bbg.load_implied_terms(a.vol_index[6:]).dropna()
+                iv3 = float(terms["IV3M"].iloc[-1])
+        else:
+            est = hedge_note.implied_estimate(pick, float(rv.iloc[-1]))
+            if est is not None:
+                iv1, source = est, "implied estimated from realized, calibrated on Bloomberg history"
+        vol_used = iv1 if np.isfinite(iv1) else float(rv.iloc[-1])
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Front", f"{cm['front_price']:,.2f}", cm["front"], delta_color="off")
+        c2.metric(f"{cm['far_months']}M vs front", f"{cm['far_pct']:+.1f}%", cm["shape"], delta_color="off")
+        c3.metric("Realized 21d", fmt(float(rv.iloc[-1])), f"{m.percentile_rank(rv, 1260):.0f}th pct 5y", delta_color="off")
+        c4.metric("Vol used for options", fmt(vol_used), source, delta_color="off")
+        st.markdown(hedge_note.curve_sentence(pick, cm))
+        tbl = hedge_costs.hedge_table(vol_used / 100, iv3 / 100 if np.isfinite(iv3) else None)
+        st.markdown("#### Cost of optionality, % of the futures price (Black-76, flat vol)")
+        st.dataframe(pd.DataFrame({
+            "Tenor": list(tbl),
+            "Vol": [f"{v['vol']:.1f}%" for v in tbl.values()],
+            "ATM put": [f"{v['atm_put']:.2f}%" for v in tbl.values()],
+            "90% put": [f"{v['put_90']:.2f}%" for v in tbl.values()],
+            "110% call": [f"{v['call_110']:.2f}%" for v in tbl.values()],
+            "Producer collar: 90% floor, free cap at": [f"{v['producer_cap']:.1f}%" for v in tbl.values()],
+            "Consumer collar: 110% cap, free floor at": [f"{v['consumer_floor']:.1f}%" for v in tbl.values()],
+        }).set_index("Tenor"), use_container_width=True)
+        st.caption("Flat vol: the market's skew makes puts dearer than shown and moves collar strikes; read these as orders of magnitude.")
+        if a.vol_index:
+            ivs = ohlc(a.vol_index, "2015-01-01", offline)["Close"].dropna()
+            vp = research.variance_premium(ivs, pxh["Close"])
+            st.markdown("#### Has the option market overcharged for this risk?")
+            st.markdown(f"Since {vp['start']:%Y}, 1-month implied vol averaged **{vp['mean']:+.1f} points** over the vol realized "
+                        f"in the following month (positive on {vp['hit']:.0f}% of days, worst {vp['worst']:+.1f}). By level of implied: "
+                        + ", ".join(f"{k} {v:+.1f}" for k, v in vp["by_tercile"].items()) + ".")
+            if a.vol_index.startswith("BBGIV:"):
+                terms = bbg.load_implied_terms(a.vol_index[6:])
+                ts = research.term_structure(terms["IV1M"], terms["IV3M"])
+                st.markdown(f"1-month implied sits above 3-month on {ts['share_inverted']:.0f}% of days; today the spread is "
+                            f"{ts['spread_now']:+.1f} points. When inverted, 1-month implied moved {ts['next_change_inverted']:+.1f} "
+                            f"points over the next month on average (fell {ts['fell_when_inverted']:.0f}% of the time), against "
+                            f"{ts['next_change_normal']:+.1f} otherwise: a hedger who can wait, or hedge further out, usually pays less.")
+        if pick in bbg.FREE_PROXY:
+            label, ticker = bbg.FREE_PROXY[pick]
+            free = ohlc(ticker, "2015-01-01", offline)
+            if not free.empty:
+                au = research.proxy_audit(pxh["Close"], free["Close"])
+                st.markdown("#### How the free-data proxy compares")
+                st.markdown(f"{label} ({ticker}) against this benchmark since November 2021: weekly return correlation "
+                            f"**{au['weekly_corr']:.2f}**, its realized vol typically **{au['vol_ratio']:.2f}x** the benchmark's, "
+                            f"and today at the {au['pct_proxy']:.0f}th percentile of five years against "
+                            f"{au['pct_benchmark']:.0f}th for the benchmark.")

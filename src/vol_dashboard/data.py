@@ -32,7 +32,12 @@ def _flatten(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def load_ohlc(ticker: str, start: str = "2010-01-01", offline: bool = False) -> pd.DataFrame:
-    """Daily OHLC for one ticker. Returns an empty frame if nothing is available."""
+    """Daily OHLC for one ticker. Returns an empty frame if nothing is available.
+    BBG:/BBGIV: tickers are local Bloomberg extracts (see bloomberg.py), never fetched or mirrored here."""
+    if ticker.startswith(("BBG:", "BBGIV:")):
+        from . import bloomberg
+        df = bloomberg.load_implied(ticker[6:]) if ticker.startswith("BBGIV:") else bloomberg.load_prices(ticker[4:])
+        return df[df.index >= pd.Timestamp(start)]
     path = _cache_path(ticker)
     if offline and path.exists():
         return pd.read_csv(path, index_col=0, parse_dates=True)
@@ -86,6 +91,9 @@ def futures_curve(root: str, exchange: str, n_months: int = 12, offline: bool = 
     contracts whose last quote is more than three days older than the freshest one: an expired contract
     keeps its last settlement on Yahoo (Brent's December contract stops at the end of October).
     """
+    if root.startswith("BBG:"):
+        from . import bloomberg
+        return bloomberg.load_curve(root[4:])
     path = DATA_DIR / f"curve_{root}.csv"
     if offline and path.exists():
         return pd.read_csv(path, parse_dates=["expiry_month"])
