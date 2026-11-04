@@ -22,6 +22,7 @@ jobs:
       - name: Build the morning sheet
         run: python scripts/build_sheet.py
       - name: Build the corporate-hedging note
+        continue-on-error: true          # never block the morning sheet
         run: python scripts/build_hedge_note.py
       - name: Commit history and sheet
         run: |
