@@ -21,10 +21,12 @@ jobs:
       - run: python scripts/snapshot_skew.py
       - name: Build the morning sheet
         run: python scripts/build_sheet.py
+      - name: Build the corporate-hedging note
+        run: python scripts/build_hedge_note.py
       - name: Commit history and sheet
         run: |
           git config user.name "skew-bot"
           git config user.email "skew-bot@localhost"
-          git add data/skew_history.csv sheet/latest.json
+          git add data/skew_history.csv sheet/latest.json sheet/hedging.json data/curve_history.csv data/curve_*.csv
           git diff --cached --quiet || git commit -m "Skew snapshot and morning sheet $(date -u +%F)"
           git push

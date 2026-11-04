@@ -8,7 +8,7 @@
 
 Interactive Streamlit dashboard that compares **realized and implied volatility** across
 equity indices (S&P 500, Nasdaq 100, Russell 2000, Euro Stoxx 50) and commodities
-(WTI crude, gold, silver, natural gas), built on free data so anyone can rerun it, with
+(WTI and Brent crude, natural gas, copper, aluminium, gold, silver, wheat, corn, soybeans), built on free data so anyone can rerun it, with
 three research questions answered on top: can the VIX be rebuilt from a retail option chain,
 does implied vol forecast realized vol better than history, and how does crude vol behave
 along the futures curve.
@@ -181,6 +181,29 @@ historical worst case in the same regime, and the Plotly figures as JSON). It co
   two sister projects. The Streamlit app stays the full interactive version.
 
 No financial logic lives in `sheet.py`: every number comes from a function that already exists in `src/`.
+
+## Corporate-hedging note
+
+**[https://morning-sheet-olive.vercel.app/hedging](https://morning-sheet-olive.vercel.app/hedging)**, rebuilt every weekday
+with the morning sheet. `src/vol_dashboard/hedge_note.py` turns the dashboard into what a commodities sales desk needs before
+a client call, for ten markets in three groups (energy, metals, grains):
+
+- **What a forward hedge locks in.** The listed curve, expired contracts dropped, read 12 months after the front (December
+  against December for gas and grains, so the comparison is same-season; the furthest listed contract when the free feed
+  stops earlier, and the note says so). Backwardation: a producer selling forward locks in less than the front, a consumer
+  pays less. Contango: the reverse.
+- **What optionality costs against history.** 21-day realized vol and its percentile over one and five years. Implied vol
+  where CBOE publishes it (OVX for WTI, GVZ for gold), with its premium over realized.
+- **Talking points**, ranked by how far a market's curve or vol percentile sits from normal, and a daily snapshot of every
+  curve (`data/curve_history.csv`) so later notes can show how curves moved.
+
+Every sentence is a rule applied to the numbers; it is context for client conversations, not a recommendation. Limits:
+copper and aluminium are COMEX contracts, not LME; Brent is the NYMEX financial contract; no TTF, power, softs or pulp on
+the free feed; the front-month series includes roll gaps; aluminium's free curve stops after about six months.
+
+```bash
+.venv/bin/python scripts/build_hedge_note.py      # writes sheet/hedging.json
+```
 
 ## Run it
 

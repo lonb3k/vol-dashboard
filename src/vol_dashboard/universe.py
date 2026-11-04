@@ -26,6 +26,13 @@ UNIVERSE: list[Asset] = [
     Asset("Gold", "GC=F", "^GVZ", "GLD", "Commodity", "GC", "CMX"),
     Asset("Silver", "SI=F", None, "SLV", "Commodity", "SI", "CMX"),  # ^VXSLV has no history on Yahoo
     Asset("Natural Gas", "NG=F", None, "UNG", "Commodity", "NG", "NYM"),
+    # Corporate-hedging markets: futures curves and realized vol only (no free implied vol, no liquid ETF options)
+    Asset("Brent Crude", "BZ=F", None, None, "Commodity", "BZ", "NYM"),     # NYMEX Brent last-day financial
+    Asset("Copper", "HG=F", None, None, "Commodity", "HG", "CMX"),          # COMEX copper, $/lb (not LME)
+    Asset("Aluminium", "ALI=F", None, None, "Commodity", "ALI", "CMX"),     # COMEX aluminium, $/t (not LME)
+    Asset("Wheat", "ZW=F", None, None, "Commodity", "ZW", "CBT"),           # CBOT SRW wheat, cents/bushel
+    Asset("Corn", "ZC=F", None, None, "Commodity", "ZC", "CBT"),
+    Asset("Soybeans", "ZS=F", None, None, "Commodity", "ZS", "CBT"),
 ]
 
 BY_NAME = {a.name: a for a in UNIVERSE}

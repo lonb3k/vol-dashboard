@@ -71,11 +71,20 @@ def load_closes(tickers: list[str], start: str = "2010-01-01", offline: bool = F
     return pd.DataFrame(series).sort_index()
 
 
+def drop_stale(curve: pd.DataFrame, days: int = 3) -> pd.DataFrame:
+    """Drop contracts whose last quote is more than `days` older than the freshest one (expired contracts)."""
+    if curve.empty or "last_trade" not in curve:
+        return curve
+    return curve[curve["last_trade"] >= curve["last_trade"].max() - pd.Timedelta(days=days)].reset_index(drop=True)
+
+
 def futures_curve(root: str, exchange: str, n_months: int = 12, offline: bool = False) -> pd.DataFrame:
     """Settlement of the next `n_months` listed futures contracts, e.g. CLZ26.NYM.
 
     Yahoo lists individual contracts under ROOT + month code + 2-digit year + .EXCHANGE.
-    Returns columns: contract, expiry_month, price. Missing contracts are skipped.
+    Returns columns: contract, expiry_month, price, last_trade. Missing contracts are skipped, and so are
+    contracts whose last quote is more than three days older than the freshest one: an expired contract
+    keeps its last settlement on Yahoo (Brent's December contract stops at the end of October).
     """
     path = DATA_DIR / f"curve_{root}.csv"
     if offline and path.exists():
@@ -98,8 +107,9 @@ def futures_curve(root: str, exchange: str, n_months: int = 12, offline: bool = 
             "contract": code,
             "expiry_month": pd.Timestamp(year=year, month=month, day=1),
             "price": float(hist["Close"].iloc[-1]),
+            "last_trade": pd.Timestamp(hist.index[-1]).tz_localize(None).normalize(),
         })
-    curve = pd.DataFrame(rows)
+    curve = drop_stale(pd.DataFrame(rows))
     if not curve.empty:
         curve.to_csv(path, index=False)
     return curve
