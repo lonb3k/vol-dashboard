@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 
 from vol_dashboard.data import drop_stale
-from vol_dashboard.hedge_note import curve_metrics, curve_sentence, ordinal, percentile, vol_band
+from vol_dashboard.hedge_note import curve_metrics, curve_sentence, option_expiry, ordinal, percentile, vol_band
 
 
 def _curve(prices, start="2026-12-01", step=1):
@@ -48,3 +48,8 @@ def test_percentiles_bands_and_ordinals():
     assert percentile(s, 80) == 80.0
     assert vol_band(85) == "high" and vol_band(15) == "low" and vol_band(50) == "normal"
     assert [ordinal(x) for x in (1, 2, 3, 4, 11, 12, 13, 21, 83)] == ["1st", "2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "83rd"]
+
+
+def test_option_expiry_sits_before_delivery():
+    assert option_expiry(pd.Timestamp("2027-01-01"), "CL") == pd.Timestamp("2026-12-20")
+    assert option_expiry(pd.Timestamp("2027-01-01"), "BZ") == pd.Timestamp("2026-11-20")

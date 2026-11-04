@@ -28,6 +28,6 @@ jobs:
         run: |
           git config user.name "skew-bot"
           git config user.email "skew-bot@localhost"
-          git add data/skew_history.csv sheet/latest.json sheet/hedging.json data/curve_history.csv data/curve_*.csv
+          git add sheet/latest.json sheet/hedging.json data/*.csv data/contracts/*.csv   # every mirror: the hosted app reads them
           git diff --cached --quiet || git commit -m "Skew snapshot and morning sheet $(date -u +%F)"
           git push

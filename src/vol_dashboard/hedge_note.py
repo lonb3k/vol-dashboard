@@ -24,7 +24,9 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from . import charts, metrics as m
+from .atm import MEASURED_RATIO
 from .data import DATA_DIR, futures_curve, load_ohlc
+from .options import RISK_FREE
 from .sheet import _fig, _num, tile
 from .universe import UNIVERSE
 
@@ -154,6 +156,50 @@ def vol_sentence(name: str, v: dict) -> str:
         out += (f" Implied vol is estimated at about {v['iv_est']:.0f}%: on Bloomberg history since {c['start'][:4]}, implied has "
                 f"run {c['ratio']:.2f} times realized, with a typical error of {c['mae_pts']:.0f} points.")
     return out
+
+
+# Options on these futures expire around the 20th of the month before delivery; Brent's a month earlier.
+OPTION_LAG = {"BZ": 2}
+EUROPEAN = {"Copper": "LME copper", "Aluminium": "LME aluminium", "Wheat": "Euronext milling wheat"}
+
+
+def option_expiry(delivery: pd.Timestamp, root: str) -> pd.Timestamp:
+    m = delivery - pd.DateOffset(months=OPTION_LAG.get(root, 1))
+    return pd.Timestamp(m.year, m.month, 20)
+
+
+def calculator(curves: dict, table: pd.DataFrame, as_of: pd.Timestamp) -> dict:
+    """Inputs for the page's hedge calculator: each market's listed curve and the vol to price options with."""
+    audit = calibration()["proxy_audit"]
+    out = []
+    for n in table.index:
+        r, a = table.loc[n], BY(n)
+        if a.vol_index and not np.isnan(r["iv"]):
+            vol = r["iv"] * MEASURED_RATIO.get(a.vol_index, 1.0)
+            source = f"CBOE {a.vol_index.lstrip('^')} implied, scaled to at-the-money ({MEASURED_RATIO.get(a.vol_index, 1.0):.2f})"
+        elif not np.isnan(r["iv_est"]):
+            vol = r["iv_est"]
+            source = f"implied estimated from realized, ratio {calibration()['implied_from_realized'][n]['ratio']:.2f} calibrated on Bloomberg"
+        else:
+            vol = r["rv21"]
+            source = "21-day realized (no implied published on the free feed)"
+        contracts = []
+        for _, c in curves[n].iterrows():
+            exp = option_expiry(c["expiry_month"], a.futures_root)
+            days = (exp - as_of).days
+            if days >= 5:
+                contracts.append({"contract": c["contract"].split(".")[0], "delivery": f"{c['expiry_month']:%b %Y}",
+                                  "price": _num(c["price"], 4), "days": int(days)})
+        bench = None
+        key = {"Copper": "Copper", "Aluminium": "Aluminium", "Wheat": "Wheat"}.get(n)
+        if key in audit:
+            bench = {"name": EUROPEAN[n], "vol_ratio": audit[key]["vol_ratio"]}
+        out.append({"name": n, "unit": UNITS.get(n, ""), "vol": _num(vol, 1), "vol_source": source,
+                    "rv21": _num(r["rv21"], 1), "pct_5y": _num(r["pct_5y"], 0), "contracts": contracts, "benchmark": bench})
+    return {"rate": RISK_FREE, "markets": out,
+            "note": "Black-76 on the future, one flat vol for every strike and tenor, option expiry approximated to the 20th of "
+                    "the month before delivery (Brent: two months before). A desk prices off the smile: puts would come out "
+                    "dearer and the free cap of a collar lower. Indicative, not a quote."}
 
 
 def snapshot_curves(curves: dict, as_of: pd.Timestamp) -> None:
@@ -314,6 +360,7 @@ def build_hedge_note(offline: bool = False, start: str = "2015-01-01") -> dict:
             "Deferred metal contracts trade thinly, so intermediate points can be noisy; the 12-month comparison uses the same "
             "delivery month a year later, usually the most liquid.",
         ],
+        "calculator": calculator(curves, table, as_of),
         "warnings": warnings_,
         "links": {"repo": "https://github.com/lonb3k/vol-dashboard", "streamlit": "https://lonb3k-vol-dashboard.streamlit.app"},
     }
